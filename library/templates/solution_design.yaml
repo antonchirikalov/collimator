@@ -1,0 +1,58 @@
+version: "0.1"
+name: solution_design
+
+# Solution design mode: build requirements from the sources, then draft the solution
+# design with two models in parallel, let a selector pick the stronger candidate, and
+# refine the winner against a critic. The most expensive of the three templates.
+
+nodes:
+  - id: scan
+    type: builtin/scanner
+
+  - id: extract
+    type: agent
+    agent: source_processor@1
+    map: scan.sources
+    params: { workers: 3, min_ok: 1 }
+
+  - id: refine
+    type: loop
+    params: { max_rounds: 3 }
+    body:
+      agent: requirements_writer@1
+      inputs: { extracts: extract.extract }
+    critic:
+      agent: requirements_critic@1
+      inputs: { draft: "@body", extracts: extract.extract }
+    outputs: { doc: "@body" }
+
+  - id: design
+    type: agent
+    agent: solution_designer@1
+    inputs: { requirements: refine.doc }
+    # the contest runs on what this fork can actually reach: the Claude Code CLI
+    # serves the subscription's models, and `model_alias()` hands the CLI whatever
+    # follows the provider — a non-claude provider here ships a template that cannot run
+    map_over: { models: ["claude/sonnet", "claude/opus"] }
+    params: { workers: 2 }
+
+  - id: choose
+    type: select
+    candidates: design.design_doc
+    selector:
+      agent: solution_design_selector@1
+    params: { fallback: first_ok }
+
+  - id: sd_refine
+    type: loop
+    params: { max_rounds: 3 }
+    body:
+      agent: solution_designer@1
+      model: "@choose.winner_model"
+      inputs: { requirements: refine.doc, draft: choose.out }
+    critic:
+      agent: solution_design_critic@1
+      # the requirements come from three layers up: `inputs` references any node's
+      # port, not just the previous node's (SPEC §8.1)
+      inputs: { draft: "@body", requirements: refine.doc }
+    outputs: { design: "@body" }

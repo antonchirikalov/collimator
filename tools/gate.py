@@ -26,16 +26,40 @@ import re
 import sys
 from pathlib import Path
 
-FENCED_BLOCK = re.compile(r"^```.*?^```\s*", re.S | re.M)
-HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
-TABLE_ROW = re.compile(r"^[ \t]*\|.*\|[ \t]*$\n?", re.M)
+FENCED_BLOCK = re.compile(r"^```.*?^```\s*", re.DOTALL | re.MULTILINE)
+HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+TABLE_ROW = re.compile(r"^[ \t]*\|.*\|[ \t]*$\n?", re.MULTILINE)
 IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
-HEADING_MARK = re.compile(r"^#{1,6}[ \t]+", re.M)
-LIST_MARK = re.compile(r"^[ \t]*([-*+]|\d+\.)[ \t]+", re.M)
+HEADING_MARK = re.compile(r"^#{1,6}[ \t]+", re.MULTILINE)
+LIST_MARK = re.compile(r"^[ \t]*([-*+]|\d+\.)[ \t]+", re.MULTILINE)
 BACKTICK = re.compile(r"`+")
 EMPHASIS = re.compile(r"(\*\*|__|\*|_)")
 BLANKS = re.compile(r"[ \t]*\n[ \t]*")
+MSYS_DRIVE = re.compile(r"^/([A-Za-z])(?=/|$)")
+
+
+def resolve_path(path: Path) -> Path:
+    """Accept the msys spelling of a Windows path.
+
+    The gate stage does not control which shell the agent picks, and the probe run showed
+    all three forms for one and the same command the script emitted: Bash with the path
+    rewritten to ``/c/Users/…``, PowerShell with a ``cd`` prefix, Bash with the path
+    quoted. Git Bash rewrites a drive path on the way to the process, so ``/c/Users/…``
+    is what argv actually carries — real for the shell, absent for Python.
+
+    Fallback only, never a rewrite: a path that exists as given is returned untouched, and
+    a candidate that does not exist either leaves the original in place so the "output
+    missing" message still names the path the caller passed.
+    """
+    if path.exists():
+        return path
+    posix = path.as_posix()
+    match = MSYS_DRIVE.match(posix)
+    if match is None:
+        return path
+    candidate = Path(f"{match.group(1).upper()}:{posix[match.end() :] or '/'}")
+    return candidate if candidate.exists() else path
 
 
 def prose_of(text: str) -> str:
@@ -80,10 +104,11 @@ def main() -> int:
     measures: dict[str, object] = {}
 
     if args.file is not None:
-        if not args.file.exists():
-            problems.append(f"output missing: {args.file}")
+        target = resolve_path(args.file)
+        if not target.exists():
+            problems.append(f"output missing: {target}")
         else:
-            text = args.file.read_text(encoding="utf-8")
+            text = target.read_text(encoding="utf-8")
             chars = len(text)
             prose = len(prose_of(text))
             measures["chars"] = chars
@@ -100,7 +125,7 @@ def main() -> int:
 
             hits: dict[str, int] = {}
             for pattern in args.forbid:
-                found = re.findall(pattern, text, flags=re.I)
+                found = re.findall(pattern, text, flags=re.IGNORECASE)
                 hits[pattern] = len(found)
                 if found:
                     sample = ", ".join(sorted({str(f) for f in found})[:3])
@@ -111,17 +136,16 @@ def main() -> int:
                 measures["regex"] = hits
 
     if args.dir is not None:
-        if not args.dir.is_dir():
-            problems.append(f"output directory missing: {args.dir}")
+        target_dir = resolve_path(args.dir)
+        if not target_dir.is_dir():
+            problems.append(f"output directory missing: {target_dir}")
         else:
-            entries = sorted(x.name for x in args.dir.iterdir())
+            entries = sorted(x.name for x in target_dir.iterdir())
             measures["entries"] = len(entries)
             if not entries:
                 problems.append("output directory has no content")
             if args.min_entries is not None and len(entries) < args.min_entries:
-                problems.append(
-                    f"min_entries {args.min_entries} not met (got {len(entries)})"
-                )
+                problems.append(f"min_entries {args.min_entries} not met (got {len(entries)})")
 
     report = {"ok": not problems, "problems": problems, "measures": measures}
     print(json.dumps(report, ensure_ascii=False, indent=2))

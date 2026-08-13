@@ -1,0 +1,35 @@
+version: "0.1"
+name: discovery
+
+# Discovery mode (spectra): build requirements, then generate client discovery
+# questions — arch_probe drafts them, arch_critic curates the final report.
+nodes:
+  - id: scan
+    type: builtin/scanner
+
+  - id: extract
+    type: agent
+    agent: source_processor@1
+    map: scan.sources
+    params: { workers: 3, min_ok: 1 }
+
+  - id: refine
+    type: loop
+    params: { max_rounds: 3 }
+    body:
+      agent: requirements_writer@1
+      inputs: { extracts: extract.extract }
+    critic:
+      agent: requirements_critic@1
+      inputs: { draft: "@body", extracts: extract.extract }
+    outputs: { doc: "@body" }
+
+  - id: probe
+    type: agent
+    agent: arch_probe@1
+    inputs: { requirements: refine.doc }
+
+  - id: discover
+    type: agent
+    agent: arch_critic@1
+    inputs: { draft: probe.arch_report, requirements: refine.doc }

@@ -1,0 +1,107 @@
+version: "0.1"
+types:
+  source@v1: { kind: any }
+  extract@v1: { kind: file, format: json, schema: extract.schema.json }
+  requirements@v1:
+    kind: file
+    format: markdown
+    rules:
+      # Anchored at the very start on purpose: a live run had the writer prepend a YAML
+      # front-matter block with invented metadata (fr_count: 9 against ten FRs), which
+      # the critic then had to argue about. The gate settles it mechanically.
+      - { rule: regex, pattern: "\\A#\\s*Requirements:" }
+      - { rule: regex, pattern: "FR-\\d+" }
+  # A design with no rules passed the gate at three lines; SPEC §5's own example gives
+  # design_doc a min_length. The regex is the mechanical half of "mark what you chose":
+  # the section must exist, and the critic judges whether it is honest.
+  design_doc@v1:
+    kind: file
+    format: markdown
+    rules:
+      - { rule: min_length, value: 2000 }
+      - { rule: regex, pattern: '^##\s*Assumptions to confirm', flags: "m" }
+      # A live run shipped a design with no risks section at all; the critic spent a
+      # whole round saying so. Heading wording stays free (numbered, singular, "and
+      # mitigations") — only its presence is mechanical.
+      - { rule: regex, pattern: '^#{2,3}[^\n]*[Rr]isk', flags: "m" }
+  # Research brief/topic: what a `discover` pipeline searches from (SPEC §20.4).
+  brief@v1: { kind: file, format: markdown }
+  # A discover agent's output: one file per found source (+ optional _index.json).
+  # The ENGINE turns this dir into collection<source@v1> — the agent produces one
+  # artifact, never a collection (I6 / SPEC §20.1).
+  found_sources@v1: { kind: dir }
+  discovery_report@v1: { kind: file, format: markdown }
+  # Architecture-probe report: workshop-ready discovery questions grounded in
+  # the source material (spectra arch_probe). Markdown document.
+  arch_report@v1: { kind: file, format: markdown }
+  # An explanatory technical article: teaches a mechanism to a reader who does not know
+  # it yet. Genre floor only — the rules here say "this is an article", not "this
+  # article is finished".
+  #
+  # Deliberately NOT here: the typographic and calque checks. They belong to the node
+  # that runs after the stylist (`gate_rules` with `forbid_regex`), because a writer's
+  # first draft legitimately still has them — a type-level ban would fail every round
+  # of the writing loop for a defect the pipeline fixes two nodes later.
+  article@v1:
+    kind: file
+    format: markdown
+    rules:
+      # anchored at the very start: front matter with invented metadata is a defect a
+      # gate settles, not something a critic should spend a round arguing about
+      - { rule: regex, pattern: "\\A#\\s+\\S" }
+      # a figure the article promises is a contract with the illustrator: the drawing
+      # step fulfils exactly these placeholders, by slug
+      - { rule: regex, pattern: '!\[[^\]]*\]\(figures/[a-z0-9-]+\.png\)' }
+      # genre floor: an explainer that fits in two screens has not explained anything.
+      # What a given assignment needs is the brief's business (`gate_rules` on the node)
+      - { rule: min_length, value: 6000 }
+  # A style critic's findings over one article: mechanical layer (dashes, quotes, forms
+  # of address, calques, term drift) and machine-pattern layer (impersonal passive,
+  # punctuation overload, three actors in one sentence, "не X, а Y" chains, uniform
+  # rhythm). Each finding carries quote → reason → before/after and a `decision` the
+  # human sets at the checkpoint: the author's voice is never rewritten silently.
+  style_findings@v1:
+    kind: file
+    format: json
+    schema: style_findings.schema.json
+  # Generated publication illustrations + a manifest recording each figure's caption
+  # and the exact command that produced it, so any figure can be regenerated.
+  illustration@v1: { kind: dir }
+  # Publish confirmation: page URL/id/version, attachment counts (spectra confluence_publisher).
+  publication@v1: { kind: file, format: json }
+  # Academic reading note on one source, carrying the DSTU 8302:2015 bibliographic
+  # data the report's source list is built from.
+  study_note@v1: { kind: file, format: json, schema: study_note.schema.json }
+  # Subject-matter analysis over the whole set of study notes, organised by the
+  # brief's aspects. The stage a live run did without: with reading feeding prose
+  # directly, nobody compared the sources, so the only thing left to write about
+  # at length was the sources themselves — 45 pages characterising the shelf.
+  analysis@v1: { kind: file, format: json, schema: analysis.schema.json }
+  # Scientific-analytical report (Ukrainian). The volume requirement is a client
+  # term, not a style preference, so it is enforced mechanically rather than left
+  # to the critic to argue about: 45 pages x 1800 characters = 81 000.
+  # The genre, not one assignment: a sourced analytic report. Headings are matched
+  # as alternations so the type is not tied to a single language — the document's
+  # own language comes from the brief and the agent's prompt, not from here.
+  analytic_report@v1:
+    kind: file
+    format: markdown
+    rules:
+      - { rule: regex, pattern: '^#{1,2}\s*(ВСТУП|ВВЕДЕНИЕ|INTRODUCTION)', flags: "mi" }
+      - { rule: regex, pattern: '^#{1,2}\s*(ВИСНОВКИ|ВЫВОДЫ|CONCLUSIONS?)', flags: "mi" }
+      # No source list means no verifiable claims; the critic then judges whether
+      # the entries are real and whether the in-text references match them.
+      - rule: regex
+        pattern: '^#{1,2}\s*(СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ|СПИСОК ЛИТЕРАТУРЫ|REFERENCES|BIBLIOGRAPHY)'
+        flags: "mi"
+      # A reference to a source that is not in the list, and an entry nobody cites,
+      # are both countable — settled here so no review round is spent on them. The
+      # 40-character floor is what killed "Kurt v. Turkey (1998)." in a live run:
+      # a title alone leads no reader back to the source.
+      - rule: citation_closure
+        list_heading: СПИСОК ВИКОРИСТАНИХ ДЖЕРЕЛ|СПИСОК ЛИТЕРАТУРЫ|REFERENCES|BIBLIOGRAPHY
+        min_entry_chars: 40
+      # Genre floor only — a report is not a memo. The volume a given assignment
+      # demands is the brief's business, and the engine cannot yet enforce a
+      # per-project number (see min_length note below).
+      - { rule: min_length, value: 20000 }

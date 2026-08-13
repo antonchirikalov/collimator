@@ -1,0 +1,15 @@
+name: arch_critic
+version: 1
+description: >
+  Reviews an architecture-probe report and writes the final discovery report:
+  drops generic or already-answered questions, keeps only probes that show close
+  reading and would move a real design decision, and organizes them into a
+  workshop-ready discovery document (spectra's arch_critic).
+consumes:
+  - { port: draft, type: arch_report@v1 }
+  - { port: requirements, type: requirements@v1 }
+produces:
+  - { port: report, type: discovery_report@v1 }
+needs: [read, edit]
+defaults:
+  timeout_s: 1800

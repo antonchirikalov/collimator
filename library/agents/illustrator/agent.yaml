@@ -1,0 +1,20 @@
+name: illustrator
+version: 1
+description: >
+  Fulfils the figure placeholders an article declared. For every
+  ![caption](figures/<slug>.png) in the text it runs the figgybanana CLI once and writes
+  output/illustration/<slug>.png, then records what was generated and with which command
+  so any figure can be regenerated unchanged. The drawing judgement — planning the
+  figure, styling it, looking at the render and correcting it — happens inside that
+  tool, which has its own visualiser/critic loop; this step is execution.
+consumes:
+  - { port: article, type: article@v1 }
+produces:
+  - { port: illustration, type: illustration@v1 }
+# bash, because the work is invoking a CLI. A knowing exception: the workdir guard does
+# not match Bash, so on this step I1 rests on the prompt rather than on the hook. It
+# goes away when builtins can consume an input and the engine runs the tool itself.
+needs: [read, edit, bash]
+defaults:
+  # four diagrams through a tool that runs its own refinement loop per figure
+  timeout_s: 3600

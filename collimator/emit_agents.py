@@ -1,0 +1,138 @@
+"""Генератор определений подагентов: `agent.yaml` + `prompt.md` → `.claude/agents/<slug>.md`.
+
+Определение агента для Claude Code — это один markdown-файл: YAML-фронтматтер с именем,
+описанием и списком разрешённых инструментов, дальше телом системный промпт. Всё, кроме
+тела, выводится из контракта агента, поэтому руками этот файл не пишется и правится только
+источник в `library/agents/<name>/`.
+
+Форма фронтматтера взята не из документации, а из пробника этапа 0: `tools` строкой через
+запятую и `mcpServers` блочным списком — ровно так был объявлен `probe-researcher`, который
+в живом прогоне поднялся под своим `agentType` и дотянулся до `mcp__tavily-remote__tavily_search`
+(`docs/probe-findings.md`, пункты 2 и 3).
+
+Модель здесь не пишется намеренно. У агента в библиотеке её нет: `params.model` живёт у узла
+конвейера, потому что один и тот же агент в разных конвейерах стоит разных денег. Модель
+задаёт вызов `agent()` в скрипте — это работа `emit_workflow.py`.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from pathlib import Path
+
+import yaml
+
+from collimator.models.agent import AgentSpec
+
+# Отображение возможностей контракта в инструменты Claude Code. `vision` не отдельный
+# инструмент: картинки читает тот же `Read`, поэтому `read` и `vision` сходятся в один
+# элемент и дубль убирается.
+CAPABILITY_TOOLS: dict[str, tuple[str, ...]] = {
+    "read": ("Read",),
+    "edit": ("Write", "Edit"),
+    "bash": ("Bash",),
+    "webfetch": ("WebFetch",),
+    "vision": ("Read",),
+}
+
+# Порядок инструментов в файле фиксирован, а не унаследован из `needs`: один YAML обязан
+# давать один и тот же файл, иначе diff сгенерированного перестаёт что-либо значить.
+TOOL_ORDER = ("Read", "Write", "Edit", "Bash", "WebFetch")
+
+MCP_PREFIX = "mcp:"
+
+AGENT_YAML = "agent.yaml"
+PROMPT_MD = "prompt.md"
+
+GENERATED_MARKER = (
+    "<!-- Сгенерировано collimate build из library/agents/{name}/. "
+    "Правки вносятся в источник, не сюда. -->"
+)
+
+
+def slug_of(name: str) -> str:
+    """`article_critic` → `article-critic`.
+
+    Имена в библиотеке в змеином регистре, а Claude Code свои агенты называет через дефис —
+    так выглядят и штатные, и наш `probe-researcher`, который запустился. Дефис выбран как
+    проверенная форма; имя в файле и имя в `agentType` берутся из одной функции, поэтому
+    разойтись они не могут.
+    """
+    return name.replace("_", "-")
+
+
+def mcp_servers_of(needs: Iterable[str]) -> list[str]:
+    """Серверы MCP, названные контрактом: `"mcp:tavily-remote"` → `tavily-remote`."""
+    return sorted({cap[len(MCP_PREFIX) :] for cap in needs if cap.startswith(MCP_PREFIX)})
+
+
+def tools_of(needs: Iterable[str]) -> list[str]:
+    """Возможности контракта → список инструментов для фронтматтера.
+
+    Сервер MCP попадает в список одним элементом `mcp__<сервер>` без имени инструмента:
+    в пробнике так объявленный агент получил доступ и к `tavily_search`, и к
+    `tavily_extract`, то есть префикс работает как разрешение на весь сервер.
+    """
+    caps = list(needs)
+    unknown = [c for c in caps if c not in CAPABILITY_TOOLS and not c.startswith(MCP_PREFIX)]
+    if unknown:
+        # Возможность, добавленная в модель без отображения сюда, обязана ломать сборку:
+        # молча выданный агенту пустой список инструментов отладить намного дороже.
+        raise ValueError(f"возможности без отображения в инструменты: {sorted(unknown)}")
+
+    granted = {tool for cap in caps for tool in CAPABILITY_TOOLS.get(cap, ())}
+    ordered = [tool for tool in TOOL_ORDER if tool in granted]
+    return ordered + [f"mcp__{server}" for server in mcp_servers_of(caps)]
+
+
+def load_agent(agent_dir: Path) -> tuple[AgentSpec, str]:
+    """Прочитать пакет агента из библиотеки: контракт плюс системный промпт."""
+    spec_path = agent_dir / AGENT_YAML
+    prompt_path = agent_dir / PROMPT_MD
+    if not spec_path.is_file():
+        raise FileNotFoundError(f"нет контракта агента: {spec_path}")
+    if not prompt_path.is_file():
+        raise FileNotFoundError(f"нет системного промпта: {prompt_path}")
+
+    spec = AgentSpec.model_validate(yaml.safe_load(spec_path.read_text(encoding="utf-8")))
+    return spec, prompt_path.read_text(encoding="utf-8")
+
+
+def render_agent(spec: AgentSpec, prompt: str) -> str:
+    """Собрать текст `.claude/agents/<slug>.md`."""
+    slug = slug_of(spec.name)
+    head: dict[str, object] = {
+        "name": slug,
+        # Описание в библиотеке — сложенный многострочный скаляр; во фронтматтере он
+        # обязан быть одной строкой, иначе YAML читается иначе, чем задумано.
+        "description": " ".join(spec.description.split()),
+        "tools": ", ".join(tools_of(spec.needs)),
+    }
+    servers = mcp_servers_of(spec.needs)
+    if servers:
+        head["mcpServers"] = servers
+
+    frontmatter = yaml.safe_dump(
+        head,
+        sort_keys=False,
+        allow_unicode=True,
+        width=10**6,
+        default_flow_style=False,
+    )
+    marker = GENERATED_MARKER.format(name=spec.name)
+    return f"---\n{frontmatter}---\n\n{marker}\n\n{prompt.strip()}\n"
+
+
+def emit_agent(agent_dir: Path, out_dir: Path) -> Path:
+    """Сгенерировать один файл определения. Возвращает записанный путь."""
+    spec, prompt = load_agent(agent_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target = out_dir / f"{slug_of(spec.name)}.md"
+    target.write_text(render_agent(spec, prompt), encoding="utf-8")
+    return target
+
+
+def emit_all(agents_dir: Path, out_dir: Path) -> list[Path]:
+    """Сгенерировать определения всех агентов библиотеки, в устойчивом порядке."""
+    packages = sorted(p for p in agents_dir.iterdir() if (p / AGENT_YAML).is_file())
+    return [emit_agent(package, out_dir) for package in packages]
