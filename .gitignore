@@ -1,0 +1,10 @@
+# прогоны пробника и рабочие каталоги документов — результат, не исходник
+probe-runs/
+docs-runs/
+
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/

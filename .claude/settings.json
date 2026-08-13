@@ -1,0 +1,18 @@
+{
+  "env": {
+    "PAPERBANANA_BIN": "C:\\Users\\achirikalov\\Documents\\agents\\figgybanana\\.venv\\Scripts\\paperbanana.exe",
+    "SS_GATEWAY_COMMAND": "C:\\Users\\achirikalov\\AppData\\Local\\Programs\\ss-ai-setup-electron\\SS AI Setup.exe",
+    "SS_GATEWAY_WRAPPER": "C:\\Users\\achirikalov\\AppData\\Roaming\\ss-ai-setup-electron\\mcp-launcher\\mcp-wrapper.js",
+    "SS_GATEWAY_PROFILE": "b64f003c-d9db-4d00-ad01-aee102edfdeb",
+    "SS_GATEWAY_BACKEND": "google",
+    "PYTHONUTF8": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(python -X utf8 tools/gate.py:*)",
+      "Bash(python tools/gate.py:*)",
+      "mcp__tavily-remote__tavily_search",
+      "mcp__tavily-remote__tavily_extract"
+    ]
+  }
+}
