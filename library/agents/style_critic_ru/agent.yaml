@@ -1,0 +1,25 @@
+name: style_critic_ru
+version: 1
+description: >
+  Style critic for Russian technical prose, and the pipeline copy of the author's personal
+  ru-style-critic. Hunts the mechanical defects of typography and the syntactic patterns
+  that mark generated text, and judges the draft against the author's own voice profile.
+  Returns a verdict with quoted evidence rather than a findings file: a workflow round has
+  no human in the middle to accept edits one by one, so the verdict is what the loop can
+  act on.
+consumes:
+  - { port: draft, type: article@v1 }
+  # without the assignment a deliberately stylised passage is indistinguishable from a
+  # defect — the register the article was written for comes from the order, not from taste
+  - { port: brief, type: brief@v1 }
+  # the same file the writer was given. One description of the voice, judged and written
+  # against; two would drift within a round
+  - { port: voice, type: style_profile@v1, optional: true }
+produces:
+  - { port: verdict, type: verdict@v1 }
+# `bash` carries the search tools, which is how the mechanical layer gets exact counts
+# instead of estimates. No `edit` on purpose: this critic never touches the article — it
+# says what is wrong, the writer writes.
+needs: [read, bash]
+defaults:
+  timeout_s: 3600

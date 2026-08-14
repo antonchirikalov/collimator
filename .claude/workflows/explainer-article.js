@@ -16,6 +16,12 @@
 // brief@v1 artifact, and no agent in the library does that — in refract it was `builtin/brief`,
 // engine code rather than an agent.
 //
+// Style is not a prompt here either. The author's voice lives in library/style/author-voice.md
+// and travels as an input port to the writer and to the style critic; the mechanical half of
+// it — bold and dead phrases — is a named preset inside tools/gate.py. Neither is written into
+// this file, for the same reason nothing else is: a style description duplicated between the
+// one who writes and the one who judges stops being one description after the first edit.
+//
 // Runtime limits respected here: meta is a pure literal; no import(); no Date.now and no
 // Math.random; the script never touches the filesystem — every file is read and written by an
 // agent, and every measurement is made by tools/gate.py through an agent that has Bash.
@@ -28,8 +34,8 @@ export const meta = {
     { title: 'Research', detail: 'источниковеды по аспектам, параллельно' },
     { title: 'Analyse', detail: 'аналитик сводит источники в материал' },
     { title: 'Verify', detail: 'созданы ли заявленные артефакты' },
-    { title: 'Write', detail: 'писатель под критиком, гейт измеряет объём' },
-    { title: 'Gate', detail: 'приёмка: арифметика через tools/gate.py' },
+    { title: 'Write', detail: 'писатель под двумя критиками: по существу и по стилю' },
+    { title: 'Gate', detail: 'приёмка: арифметика и запреты через tools/gate.py' },
   ],
 }
 
@@ -52,6 +58,12 @@ const MATERIAL_PATH = `${run}/material.md`
 const ARTICLE_PATH = `${run}/article.md`
 const UNRESOLVED_PATH = `${run}/UNRESOLVED.md`
 const sourcePathOf = (slug) => `${run}/sources/${slug}.md`
+
+// The author's voice profile, checked into the repository rather than written into a
+// prompt. It goes to the writer and to the style critic unchanged, so the register the
+// article is written in and the register it is judged by are one file — two copies of a
+// style description drift inside a single round.
+const VOICE_PATH = 'library/style/author-voice.md'
 
 const MAX_ROUNDS = 2
 const MAX_ASPECTS = 4
@@ -95,14 +107,39 @@ const OUTPUT_RULE =
   `return through the schema describe it, they do not replace it and are saved nowhere. If ` +
   `the file already exists and needs changing, edit it rather than write it again.`
 
-function task({ inputs, output, extra }) {
+// A critic produces no file, and until this branch existed it was handed both descriptions
+// of its own output at once: "OUTPUT (no file)" immediately followed by "the file is your
+// result, write it". That is the same contradiction that made the analyst produce neither
+// artifact, in the same script, one stage later.
+const NO_FILE_RULE =
+  `You write no file in this step and you edit nothing. The fields you return through the ` +
+  `schema ARE your result — everything you found has to fit in them.`
+
+function task({ inputs, output, extra, noFile }) {
   const ports = inputs.map((i) => `${i.port}: ${i.path}`).join('\n')
   return (
     `INPUT\n${ports}\n\n` +
-    `OUTPUT\n${output}\n\n` +
-    OUTPUT_RULE +
+    (noFile ? NO_FILE_RULE : `OUTPUT\n${output}\n\n` + OUTPUT_RULE) +
     (extra ? `\n\n${extra}` : '')
   )
+}
+
+// agent() yields null when a subagent dies on a terminal error after retries, or when the
+// person running this skips it. Every dereference below assumed an object, and the most
+// expensive of those assumptions sat in the last quarter of the script: `verdict.remarks`,
+// reached only after both writing rounds had already been paid for.
+function must(value, what) {
+  if (!value) throw new Error(`агент не вернул результат: ${what}`)
+  return value
+}
+
+// A critic that died is not a critic that approved. Silent passes are the failure this
+// pipeline exists to prevent, so a missing verdict becomes `revise` plus an open item.
+function noVerdict(who) {
+  return {
+    verdict: 'revise',
+    remarks: [`${who} не вернул вердикт — это незакрытый пункт, а не молчаливое согласие`],
+  }
 }
 
 // --- Schemas: only what the script cannot know on its own ------------------------------------
@@ -184,6 +221,49 @@ const VERDICT = {
   },
 }
 
+// The style critic's verdict carries its evidence. A previous run in this project taught
+// the shape: an inspecting agent stamped `ok` with an empty defect list on three pictures,
+// two of which carried English captions in a Russian article. What fixed it was not a
+// sterner wording but a schema field that cannot be filled without doing the work — write
+// out every bold span you found, verbatim. An empty list is then a real answer, because
+// producing it required looking.
+const STYLE_VERDICT = {
+  type: 'object',
+  required: ['verdict', 'counters', 'findings'],
+  properties: {
+    verdict: { type: 'string', enum: ['ok', 'revise'] },
+    counters: {
+      type: 'object',
+      required: ['bold_spans', 'dead_phrases', 'hyphen_for_dash'],
+      properties: {
+        bold_spans: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'каждый жирный фрагмент прозы дословно, вместе со звёздочками',
+        },
+        dead_phrases: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'каждый найденный штамп дословно, как он стоит в тексте',
+        },
+        hyphen_for_dash: { type: 'number', description: 'дефисов в роли тире, точное число' },
+      },
+    },
+    findings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['quote', 'reason', 'after'],
+        properties: {
+          quote: { type: 'string', description: 'фрагмент статьи ДОСЛОВНО' },
+          reason: { type: 'string', description: 'какой критерий нарушен и почему' },
+          after: { type: 'string', description: 'как это должно звучать' },
+        },
+      },
+    },
+  },
+}
+
 const WROTE = {
   type: 'object',
   required: ['written'],
@@ -235,10 +315,19 @@ const EXISTENCE = {
 
 // The bounds are optional on purpose: a run whose order said nothing about length gets a
 // measurement and no verdict. gate.py with no rule still reports chars and prose_chars.
+// The presets are named, not spelled out. Their patterns are Cyrillic and they live in
+// gate.py; putting them on this command line would push Russian through argv on Windows,
+// where the shell is whichever one the carrying agent picked and the codepage is whatever
+// it happens to be. A name keeps the command pure ASCII.
+//
+// `no_bold` and `ru_slop` are here rather than in a critic's remarks because both are
+// decidable by a regex, and a rule a regex can settle should never cost a revision round.
+// The style critic then spends its rounds on rhythm and voice, which no regex reaches.
 function gateCommand(path, min, max) {
   const bounds = []
   if (min) bounds.push(`--min-prose ${min}`)
   if (max) bounds.push(`--max-prose ${max}`)
+  bounds.push('--forbid-preset ru_slop --forbid-preset no_bold')
   return `python -X utf8 tools/gate.py --file ${path} ${bounds.join(' ')}`.trim()
 }
 
@@ -267,12 +356,15 @@ log(`[start] каталог=${run}`)
 log(`[start] заказ: ${order.replace(/\s+/g, ' ').slice(0, 200)}`)
 
 phase('Brief')
-const brief = await agent(BRIEF_TASK, {
-  model: 'haiku',
-  label: 'brief',
-  phase: 'Brief',
-  schema: BRIEF_OUT,
-})
+const brief = must(
+  await agent(BRIEF_TASK, {
+    model: 'haiku',
+    label: 'brief',
+    phase: 'Brief',
+    schema: BRIEF_OUT,
+  }),
+  'brief — без аспектов и языка дальше идти некуда',
+)
 const minProse = brief.min_prose
 const maxProse = brief.max_prose
 const hasBounds = Boolean(minProse || maxProse)
@@ -344,22 +436,32 @@ let analysis = await agent(analyseTask, {
   phase: 'Analyse',
   schema: ANALYSIS,
 })
-log(
-  `[analyse] согласий=${analysis.agreements.length} расхождений=${analysis.disagreements.length} ` +
-    `пробелов=${analysis.gaps.length}`,
-)
-for (const d of analysis.disagreements) log(`[analyse/расхождение] ${d}`)
-for (const g of analysis.gaps) log(`[analyse/пробел] ${g}`)
+// The analysis object is read here for the log only — the artifact the writer consumes is
+// the file. A dead analyst therefore does not stop the run, but it must be visible: the
+// verification stage below is what decides whether the material actually exists.
+if (analysis) {
+  log(
+    `[analyse] согласий=${analysis.agreements.length} расхождений=${analysis.disagreements.length} ` +
+      `пробелов=${analysis.gaps.length}`,
+  )
+  for (const d of analysis.disagreements) log(`[analyse/расхождение] ${d}`)
+  for (const g of analysis.gaps) log(`[analyse/пробел] ${g}`)
+} else {
+  log('[analyse] АНАЛИТИК НЕ ВЕРНУЛ РЕЗУЛЬТАТ — проверка на диске решит, есть ли материал')
+}
 
 // --- Verify: a claimed path is not an artifact until something looks at the disk --------------
 
 phase('Verify')
-let existence = await agent(existenceCommand([...found.map((f) => f.path), MATERIAL_PATH]), {
-  model: 'haiku',
-  label: 'verify:1',
-  phase: 'Verify',
-  schema: EXISTENCE,
-})
+let existence = must(
+  await agent(existenceCommand([...found.map((f) => f.path), MATERIAL_PATH]), {
+    model: 'haiku',
+    label: 'verify:1',
+    phase: 'Verify',
+    schema: EXISTENCE,
+  }),
+  'verify:1 — без проверки диска весь смысл этапа теряется',
+)
 for (const c of existence.checks) {
   log(`[verify] ok=${c.ok} ${c.path}${c.problems.length ? ' | ' + c.problems.join('; ') : ''}`)
 }
@@ -384,19 +486,31 @@ if (materialCheck && !materialCheck.ok) {
     phase: 'Verify',
     schema: EXISTENCE,
   })
-  for (const c of existence.checks) {
+  const rechecked = existence ? existence.checks : []
+  for (const c of rechecked) {
     log(`[verify/2] ok=${c.ok} ${c.path}${c.problems.length ? ' | ' + c.problems.join('; ') : ''}`)
   }
-  if (existence.checks.some((c) => !c.ok)) {
+  if (!rechecked.length || rechecked.some((c) => !c.ok)) {
     log('[verify/2] МАТЕРИАЛА ТАК И НЕТ — писатель пойдёт без него, это в отчёте')
   }
 }
 
-// --- Write: loop under a critic; the gate measures, the critic judges the mechanism -----------
+// --- Write: loop under two critics ------------------------------------------------------------
+//
+// Three judgements per round, and they are deliberately separate. The gate settles what a
+// regex settles — length, bold, dead phrases — so no round is ever spent arguing about it.
+// The mechanism critic owns whether the explanation is right. The style critic owns whether
+// it sounds like the author rather than like a machine. One agent asked for all three does
+// the easiest of them and calls it a review.
+//
+// The two critics run in parallel: neither reads the other's output, and a round costs the
+// slower of them instead of their sum.
 
 phase('Write')
 let verdict = null
-let sizeProblems = []
+let styleVerdict = null
+let gateProblems = []
+let styleRemarks = []
 let rounds = 0
 
 for (let round = 1; round <= MAX_ROUNDS; round++) {
@@ -404,87 +518,163 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   const writeInputs = [
     { port: 'brief', path: BRIEF_PATH },
     { port: 'material', path: MATERIAL_PATH },
+    { port: 'voice', path: VOICE_PATH },
     ...sourcePorts,
   ]
+  // Order of the revision block is the order of authority: what a regex measured, then what
+  // the mechanism critic found, then style. A writer that runs out of attention runs out of
+  // it on the last section, so the section that cannot be argued with goes first.
   const revision =
     round === 1
       ? null
-      : `Замечания критика:\n` +
+      : (gateProblems.length
+          ? `Гейт (детерминированная проверка, не мнение — выполнить обязательно):\n` +
+            gateProblems.map((p, i) => `${i + 1}. ${p}`).join('\n') +
+            '\n\n'
+          : '') +
+        `Замечания критика по существу:\n` +
         verdict.remarks.map((r, i) => `${i + 1}. ${r}`).join('\n') +
-        (sizeProblems.length
-          ? `\nИзмерено гейтом (арифметика, не мнение — выполнить обязательно):\n` +
-            sizeProblems.map((p, i) => `${i + 1}. ${p}`).join('\n')
+        (styleRemarks.length
+          ? `\n\nЗамечания стилевого критика (голос автора, машинные паттерны):\n` +
+            styleRemarks.map((r, i) => `${i + 1}. ${r}`).join('\n')
           : '')
 
-  const article = await agent(
-    task({ inputs: writeInputs, output: ARTICLE_PATH, extra: revision }),
-    {
+  const article = must(
+    await agent(task({ inputs: writeInputs, output: ARTICLE_PATH, extra: revision }), {
       agentType: 'article-writer',
       model: 'sonnet',
       label: `write:${round}`,
       phase: 'Write',
       schema: ARTICLE,
-    },
+    }),
+    `write:${round} — без черновика раунд пуст`,
   )
   log(`[write/${round}] изменений=${article.changes.length}`)
   for (const c of article.changes) log(`[write/${round}/правка] ${c}`)
 
-  // Measure before judging, so the critic spends its remarks on the mechanism instead of
-  // estimating length by eye.
+  // Measure before judging, so neither critic spends a remark on something already counted.
   const sized = await agent(carry(gateCommand(ARTICLE_PATH, minProse, maxProse)), {
     model: 'haiku',
     label: `gate:${round}`,
     phase: 'Write',
     schema: GATE,
   })
-  sizeProblems = sized.report.problems
+  const sizedReport = sized
+    ? sized.report
+    : { ok: false, problems: ['гейт не отработал — измерений за этот круг нет'], measures: {} }
+  gateProblems = sizedReport.problems
   log(
-    `[gate/${round}] ok=${sized.report.ok} проблем=${sizeProblems.length} ` +
-      `измерения=${JSON.stringify(sized.report.measures)}`,
+    `[gate/${round}] ok=${sizedReport.ok} проблем=${gateProblems.length} ` +
+      `измерения=${JSON.stringify(sizedReport.measures)}`,
   )
-  for (const p of sizeProblems) log(`[gate/${round}/проблема] ${p}`)
+  for (const p of gateProblems) log(`[gate/${round}/проблема] ${p}`)
 
-  verdict = await agent(
-    task({
-      inputs: [
-        { port: 'brief', path: BRIEF_PATH },
-        { port: 'draft', path: ARTICLE_PATH },
-        { port: 'material', path: MATERIAL_PATH },
-        ...sourcePorts,
-      ],
-      output: '(no file — return the verdict through the schema)',
-      extra:
-        (hasBounds
-          ? `Length has already been measured arithmetically: ` +
-            `${sizeProblems.length ? sizeProblems.join('; ') : 'within the brief'}. ` +
-            `Do not spend a remark on length.`
-          : `The order set no length, so length is not a defect here.`) +
-        (round < MAX_ROUNDS ? '' : ' This is the last revision round; there are no more.'),
-    }),
-    {
-      agentType: 'article-critic',
-      model: 'sonnet',
-      label: `critic:${round}`,
-      phase: 'Write',
-      schema: VERDICT,
-    },
-  )
+  const lastRound = round === MAX_ROUNDS
+  const criticInputs = [
+    { port: 'brief', path: BRIEF_PATH },
+    { port: 'draft', path: ARTICLE_PATH },
+    { port: 'material', path: MATERIAL_PATH },
+    ...sourcePorts,
+  ]
+
+  const [judged, styled] = await parallel([
+    () =>
+      agent(
+        task({
+          inputs: criticInputs,
+          noFile: true,
+          extra:
+            (hasBounds
+              ? `Length has already been measured arithmetically: ` +
+                `${gateProblems.length ? gateProblems.join('; ') : 'within the brief'}. ` +
+                `Do not spend a remark on length.`
+              : `The order set no length, so length is not a defect here.`) +
+            ` Typography, rhythm and the author's voice belong to a style critic running` +
+            ` beside you in this same round — leave them to it.` +
+            (lastRound ? ' This is the last revision round; there are no more.' : ''),
+        }),
+        {
+          agentType: 'article-critic',
+          model: 'sonnet',
+          label: `critic:${round}`,
+          phase: 'Write',
+          schema: VERDICT,
+        },
+      ),
+    () =>
+      agent(
+        task({
+          inputs: [
+            { port: 'draft', path: ARTICLE_PATH },
+            { port: 'brief', path: BRIEF_PATH },
+            { port: 'voice', path: VOICE_PATH },
+          ],
+          noFile: true,
+          extra:
+            `A deterministic gate has already run over this draft with the presets` +
+            ` ru_slop and no_bold, and reported: ` +
+            `${gateProblems.length ? gateProblems.join('; ') : 'ничего не найдено'}.` +
+            ` Confirm what it found by quoting it, and spend your own rounds on what a` +
+            ` regex cannot reach — rhythm, address, terminology, the author's voice.` +
+            (lastRound ? ' This is the last revision round; there are no more.' : ''),
+        }),
+        {
+          agentType: 'style-critic-ru',
+          model: 'sonnet',
+          label: `style:${round}`,
+          phase: 'Write',
+          schema: STYLE_VERDICT,
+        },
+      ),
+  ])
+
+  verdict = judged || noVerdict('критик по существу')
   log(`[critic/${round}] вердикт=${verdict.verdict} замечаний=${verdict.remarks.length}`)
   for (const r of verdict.remarks) log(`[critic/${round}/замечание] ${r}`)
 
-  // Both conditions: an article inside the brief's length with an unaddressed remark and one
-  // the critic likes that overruns are equally unfinished.
-  if (verdict.verdict === 'ok' && sized.report.ok) break
+  styleVerdict = styled || null
+  if (styled) {
+    // A finding is stored as one line the writer can act on: quote, why, and what it should
+    // say instead. The style critic's own before/after wording is kept — a paraphrase here
+    // would hand the writer an edit nobody checked.
+    styleRemarks = styled.findings.map((f) => `«${f.quote}» — ${f.reason}. Стало: ${f.after}`)
+    const c = styled.counters
+    log(
+      `[style/${round}] вердикт=${styled.verdict} находок=${styleRemarks.length} ` +
+        `жирного=${c.bold_spans.length} штампов=${c.dead_phrases.length} ` +
+        `дефис_вместо_тире=${c.hyphen_for_dash}`,
+    )
+    for (const span of c.bold_spans) log(`[style/${round}/жирное] ${span}`)
+    for (const phrase of c.dead_phrases) log(`[style/${round}/штамп] ${phrase}`)
+    for (const r of styleRemarks) log(`[style/${round}/замечание] ${r}`)
+  } else {
+    styleRemarks = noVerdict('стилевой критик').remarks
+    log(`[style/${round}] СТИЛЕВОЙ КРИТИК НЕ ВЕРНУЛ ВЕРДИКТ — считаем круг незакрытым`)
+  }
+
+  // All three conditions. An article the mechanism critic likes but written in machine
+  // prose, one in the author's voice that explains the mechanism wrongly, and one both
+  // critics like that overruns the brief are equally unfinished.
+  const styleOk = Boolean(styled) && styled.verdict === 'ok'
+  if (verdict.verdict === 'ok' && styleOk && sizedReport.ok) break
 }
 
 // A silent pass is forbidden. Remarks are recorded whether or not the verdict is `ok`: a critic
-// that says "publishable, but this is wrong" has still found something.
+// that says "publishable, but this is wrong" has still found something. Style findings are on
+// the same list — the stage that used to park a run for a human to accept them finding by
+// finding does not exist here, because a workflow run has no human in the middle.
 let unresolvedPath = null
-const openItems = [...verdict.remarks, ...sizeProblems.map((p) => `Гейт: ${p}`)]
+const stylePassed = Boolean(styleVerdict) && styleVerdict.verdict === 'ok'
+const openItems = [
+  ...verdict.remarks,
+  ...styleRemarks.map((r) => `Стиль: ${r}`),
+  ...gateProblems.map((p) => `Гейт: ${p}`),
+]
 if (openItems.length) {
-  const passed = verdict.verdict === 'ok' && !sizeProblems.length
+  const passed = verdict.verdict === 'ok' && stylePassed && !gateProblems.length
   log(
     `[unresolved] раундов=${rounds} вердикт=${verdict.verdict} ` +
+      `стиль=${styleVerdict ? styleVerdict.verdict : 'нет вердикта'} ` +
       `${passed ? 'принято с замечаниями' : 'НЕ принято'}: пунктов=${openItems.length}`,
   )
   const wrote = await agent(
@@ -497,7 +687,7 @@ if (openItems.length) {
       openItems.map((r, i) => `${i + 1}. ${r}`).join('\n'),
     { model: 'haiku', label: 'unresolved', phase: 'Write', schema: WROTE },
   )
-  unresolvedPath = wrote.written ? UNRESOLVED_PATH : null
+  unresolvedPath = wrote && wrote.written ? UNRESOLVED_PATH : null
   if (unresolvedPath) {
     log(`[unresolved] файл=${unresolvedPath}`)
   } else {
@@ -515,7 +705,9 @@ const gate = await agent(carry(gateCommand(ARTICLE_PATH, minProse, maxProse)), {
   phase: 'Gate',
   schema: GATE,
 })
-const report = gate.report
+const report = gate
+  ? gate.report
+  : { ok: false, problems: ['финальный гейт не отработал'], measures: {} }
 log(`[gate] ok=${report.ok} измерения=${JSON.stringify(report.measures)}`)
 for (const p of report.problems) log(`[gate/проблема] ${p}`)
 
@@ -524,13 +716,14 @@ for (const p of report.problems) log(`[gate/проблема] ${p}`)
 if (report.ok !== (report.problems.length === 0)) {
   log(`[gate] РАСХОЖДЕНИЕ: ok=${report.ok}, а проблем ${report.problems.length}`)
 }
-if (!gate.stdout.includes('"ok"')) {
+if (!gate || !gate.stdout.includes('"ok"')) {
   log('[gate] РАСХОЖДЕНИЕ: в сыром выводе нет JSON гейта — возможно, команда не запускалась')
 }
 
 log(
   `[итог] аспектов=${brief.aspects.length} источников=${totalSources} кругов=${rounds} ` +
-    `вердикт=${verdict.verdict} гейт_ok=${report.ok} незакрытых=${openItems.length}`,
+    `вердикт=${verdict.verdict} стиль=${styleVerdict ? styleVerdict.verdict : 'нет вердикта'} ` +
+    `гейт_ok=${report.ok} незакрытых=${openItems.length}`,
 )
 
 return {
@@ -543,6 +736,7 @@ return {
   sources_total: totalSources,
   rounds,
   verdict: verdict.verdict,
+  style_verdict: styleVerdict ? styleVerdict.verdict : null,
   open_items: openItems.length,
   gate_ok: report.ok,
   gate_measures: report.measures,

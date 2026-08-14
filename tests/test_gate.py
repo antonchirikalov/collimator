@@ -260,6 +260,121 @@ def test_no_forbid_means_no_regex_key(
     assert "regex" not in report["measures"]
 
 
+# --- --forbid-preset -----------------------------------------------------------------
+#
+# Именованные наборы существуют, чтобы кириллица не ехала через argv: шелл выбирает агент,
+# кодировку выбирает Windows. Поэтому проверяется и то, что набор ловит, и то, что он не
+# трогает — ложное срабатывание стоит круга переписывания.
+
+
+def test_preset_catches_dead_phrase(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doc = write(tmp_path, "Здесь стоит отметить одну вещь.")
+    report, _ = run(capsys, monkeypatch, "--file", str(doc), "--forbid-preset", "ru_slop")
+    assert report["ok"] is False
+    assert any("preset ru_slop matched 1x" in p for p in report["problems"])
+
+
+def test_preset_catches_bold_verbatim(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doc = write(tmp_path, "обычный текст и **выделенный** кусок")
+    report, _ = run(capsys, monkeypatch, "--file", str(doc), "--forbid-preset", "no_bold")
+    assert report["problems"] == [r"preset no_bold matched 1x: \*\*[^\n*]+\*\* (**выделенный**)"]
+
+
+def test_preset_ignores_python_power_in_a_fenced_block(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Ради этого набор и смотрит вне кода: `d_k ** 0.5` — степень, а не жирный."""
+    doc = write(tmp_path, "текст\n```python\nscores = q @ k.T / d_k ** 0.5\n```\nещё текст")
+    report, _ = run(capsys, monkeypatch, "--file", str(doc), "--forbid-preset", "no_bold")
+    assert report["ok"] is True
+
+
+def test_preset_ignores_inline_code(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doc = write(tmp_path, "в питоне это `x ** 2`, и всё")
+    report, _ = run(capsys, monkeypatch, "--file", str(doc), "--forbid-preset", "no_bold")
+    assert report["ok"] is True
+
+
+def test_preset_keeps_the_authors_own_transition(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """«Давайте разбираться» — живой переход автора, «давайте разберём» — наполнитель."""
+    doc = write(tmp_path, "Давайте разбираться. Поехали.")
+    report, _ = run(capsys, monkeypatch, "--file", str(doc), "--forbid-preset", "ru_slop")
+    assert report["ok"] is True
+
+
+def test_preset_catches_emoji(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doc = write(tmp_path, "Итоги 🚀 впечатляют")
+    report, _ = run(capsys, monkeypatch, "--file", str(doc), "--forbid-preset", "ru_slop")
+    assert report["ok"] is False
+
+
+def test_preset_leaves_arrows_and_check_marks_alone(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Стрелка и галочка — обычная техническая проза, а не эмодзи в заголовке."""
+    doc = write(tmp_path, "вход → выход, проверено ✓")
+    report, _ = run(capsys, monkeypatch, "--file", str(doc), "--forbid-preset", "ru_slop")
+    assert report["ok"] is True
+
+
+def test_presets_are_repeatable_and_measured_together(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doc = write(tmp_path, "**жирно**, и важно понимать почему")
+    report, _ = run(
+        capsys,
+        monkeypatch,
+        "--file",
+        str(doc),
+        "--forbid-preset",
+        "ru_slop",
+        "--forbid-preset",
+        "no_bold",
+    )
+    assert len(report["problems"]) == 2
+    counted = report["measures"]["preset"]
+    assert sum(counted.values()) == 2
+    assert len(counted) == len(gate.PRESETS["ru_slop"]) + len(gate.PRESETS["no_bold"])
+
+
+def test_clean_text_still_records_every_preset_pattern(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Нули в measures — доказательство, что набор отработал, а не был пропущен."""
+    doc = write(tmp_path, "Обычный текст без штампов.")
+    report, _ = run(capsys, monkeypatch, "--file", str(doc), "--forbid-preset", "ru_slop")
+    assert report["ok"] is True
+    assert set(report["measures"]["preset"].values()) == {0}
+
+
+def test_no_preset_means_no_preset_key(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doc = write(tmp_path, "текст")
+    report, _ = run(capsys, monkeypatch, "--file", str(doc))
+    assert "preset" not in report["measures"]
+
+
+def test_unknown_preset_is_rejected_by_the_parser(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Опечатка в имени набора обязана падать, а не тихо ничего не проверять."""
+    doc = write(tmp_path, "текст")
+    monkeypatch.setattr(sys, "argv", ["gate.py", "--file", str(doc), "--forbid-preset", "ru-slop"])
+    with pytest.raises(SystemExit):
+        gate.main()
+
+
 # --- --dir ---------------------------------------------------------------------------
 
 

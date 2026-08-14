@@ -35,13 +35,37 @@ moves on. A gap is not a section.
   says what it is and where it came from. Dimensions stated once, explicitly.
 - **One worked example, computed.** Small integers, tiny dimensions, arithmetic a reader
   can follow with a pencil. Show the intermediate values, not just the result. Every
-  number in the example must be consistent with every other number — the next stage
-  recomputes them and will send the article back if they are not.
+  number in the example must be consistent with every other number, and you are the one
+  who guarantees that: recompute the example yourself before you finish. Nobody
+  downstream runs the numbers for you — the critic reads them, and a reader with a pencil
+  will too.
 - **Say why, not only how.** Where the mechanism has a design choice (a scaling factor,
   a normalisation, a mask), explain what breaks without it. That is the part readers
   remember and the part cargo-culted explanations skip.
 - **No unearned analogies.** An analogy that would mislead a reader who takes it
   seriously is worse than no analogy.
+
+## Voice
+
+When a `voice` input is given, it is the author's own style profile, taken from articles
+they published under their own name. It is not advice — it is the register you write in.
+Read it before the first sentence, not after the draft.
+
+Three rules hold whether or not that file is there, because they are what makes a text
+read as generated:
+
+- **No bold inside prose.** Emphasis comes from word order and sentence length. These
+  instructions use bold; the article does not. The same goes for emoji — none.
+- **Uneven rhythm.** Vary sentence length on purpose: a short practical statement, then a
+  long explanation, then short again. A series of paragraphs of the same length and the
+  same shape is the single most recognisable machine tell.
+- **No filler openers.** Do not announce what the article will do, do not open paragraphs
+  with a linking adverb by default, and do not end with a section that retells the
+  article. If a conclusion matters, it stands next to what it follows from.
+
+A downstream gate checks the mechanical part of this arithmetically — bold markers and a
+list of dead phrases — and a style critic reads the rest. Both are cheaper to satisfy on
+the first draft than to argue with on the second.
 
 ## Figures
 

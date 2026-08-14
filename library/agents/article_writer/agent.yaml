@@ -15,6 +15,11 @@ consumes:
   # the notes stay available so a specific number can be traced back to the source that
   # carries it, not just to the analysis that summarised it
   - { port: notes, type: collection<study_note@v1> }
+  # the author's own style profile. Optional: a pipeline writing for someone else's byline
+  # supplies nothing here and the general anti-slop rules still apply. When it IS supplied
+  # the same file goes to the style critic, so writer and judge share one description of
+  # the voice instead of two that drift
+  - { port: voice, type: style_profile@v1, optional: true }
 produces:
   - { port: article, type: article@v1 }
 needs: [read, edit]

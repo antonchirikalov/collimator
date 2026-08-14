@@ -27,6 +27,7 @@ import sys
 from pathlib import Path
 
 FENCED_BLOCK = re.compile(r"^```.*?^```\s*", re.DOTALL | re.MULTILINE)
+INLINE_CODE = re.compile(r"`[^`\n]*`")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 TABLE_ROW = re.compile(r"^[ \t]*\|.*\|[ \t]*$\n?", re.MULTILINE)
 IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
@@ -37,6 +38,56 @@ BACKTICK = re.compile(r"`+")
 EMPHASIS = re.compile(r"(\*\*|__|\*|_)")
 BLANKS = re.compile(r"[ \t]*\n[ \t]*")
 MSYS_DRIVE = re.compile(r"^/([A-Za-z])(?=/|$)")
+
+# Style presets: patterns that live in this file instead of on a command line.
+#
+# Two reasons they are not just `--forbid` arguments. Cyrillic through argv on Windows is a
+# codepage lottery, and the gate stage does not choose the shell — a carrying agent picks
+# bash or powershell on its own, and the rake list already records what a mangled path does
+# to a run. And a preset is versioned with the repository: a phrase added here applies to
+# every pipeline at once, where a command-line list drifts per caller.
+#
+# Presets match OUTSIDE code — fenced blocks and inline code are removed first. Plain
+# `--forbid` still matches the whole file on purpose: `d_k ** 0.5` is a power in python and
+# `**важно**` is bold in prose, and only the caller knows which of the two it meant.
+PRESETS: dict[str, tuple[str, ...]] = {
+    # Turns of phrase that read as generated Russian. Deliberately narrow: «давайте
+    # разбираться» is a live author's transition and stays, «давайте разберём каждый
+    # пункт» is filler and goes. A pattern that fires on normal prose costs a revision
+    # round, so the list holds only phrases that carry no information at all.
+    "ru_slop": (
+        r"стоит отметить|стоит подчеркнуть|стоит обратить внимание",
+        r"важно (?:отметить|понимать|подчеркнуть)|нельзя не отметить|крайне важно",
+        r"давайте разбер[её]м|давайте рассмотрим|рассмотрим подробнее|разбер[её]м подробнее",
+        r"в заключение|подводя ито[гж]|резюмиру[яе]|в конечном ито[гж]е",
+        r"погрузимся в|нырн[её]м в|окун[её]мся в",
+        r"ключев(?:ой|ая|ым) (?:вывод|роль|момент)|игра(?:ет|ют) (?:важную|ключевую) роль",
+        r"явля(?:ет|ют)ся ключев",
+        r"в современном мире|в наши дни|на сегодняшний день|в эпоху",
+        r"не будем забывать|не стоит забывать",
+        r"в этой стать[ебй] мы (?:рассмотрим|разбер[её]м|поговорим)",
+        r"валидиру|имплементиру|хендлит|репортит|апрув",
+        # Emoji: the pictographic planes only. Arrows and check marks live lower in the
+        # table and belong to legitimate technical prose.
+        r"[\U0001F300-\U0001FAFF]",
+    ),
+    # Bold inside prose. A separate preset because it is a formatting rule, not a
+    # vocabulary one, and a pipeline may want one without the other.
+    "no_bold": (
+        r"\*\*[^\n*]+\*\*",
+        r"__[^\n_]+__",
+    ),
+}
+
+
+def outside_code(text: str) -> str:
+    """The document with fenced blocks and inline code removed, markup otherwise intact.
+
+    Not `prose_of`: that one also strips emphasis markers, so a bold-hunting pattern would
+    find nothing there. Headings, lists and tables stay — a cliché in a table heading is
+    still a cliché.
+    """
+    return INLINE_CODE.sub("", FENCED_BLOCK.sub("", text))
 
 
 def resolve_path(path: Path) -> Path:
@@ -96,6 +147,14 @@ def main() -> int:
         metavar="REGEX",
         help="pattern that must not appear (case-insensitive); repeatable",
     )
+    p.add_argument(
+        "--forbid-preset",
+        action="append",
+        default=[],
+        choices=sorted(PRESETS),
+        metavar="NAME",
+        help=f"named pattern set matched outside code; repeatable ({', '.join(sorted(PRESETS))})",
+    )
     p.add_argument("--min-entries", type=int, help="floor on entries directly inside --dir")
     p.add_argument("--strict", action="store_true", help="also exit 1 when the gate fails")
     args = p.parse_args()
@@ -134,6 +193,22 @@ def main() -> int:
                     )
             if hits:
                 measures["regex"] = hits
+
+            preset_hits: dict[str, int] = {}
+            prose_markup = outside_code(text)
+            for name in args.forbid_preset:
+                for pattern in PRESETS[name]:
+                    found = re.findall(pattern, prose_markup, flags=re.IGNORECASE)
+                    preset_hits[pattern] = len(found)
+                    if found:
+                        # The sample is what makes the problem actionable: the writer gets
+                        # the phrase it must remove, not the regex that caught it.
+                        sample = ", ".join(sorted({str(f) for f in found})[:3])
+                        problems.append(
+                            f"preset {name} matched {len(found)}x: {pattern} ({sample})"
+                        )
+            if preset_hits:
+                measures["preset"] = preset_hits
 
     if args.dir is not None:
         target_dir = resolve_path(args.dir)

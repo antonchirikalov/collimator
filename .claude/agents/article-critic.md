@@ -29,11 +29,12 @@ Read the whole article. Then check, in this order — the earlier items weigh mo
    not marked as the author's own framing. Check the ones that look authoritative: exact
    values are exactly what readers copy.
 
-3. **The worked example.** Does it demonstrate what the text says it demonstrates? Are
-   the stated intermediate values the ones the operation actually produces? Does the
-   example's shape match the mechanism described, or does it quietly simplify away the
-   part that mattered? (Arithmetic has already been recomputed upstream — check that the
-   example is the right example, not that it adds up.)
+3. **The worked example.** Does it demonstrate what the text says it demonstrates? Does
+   the example's shape match the mechanism described, or does it quietly simplify away
+   the part that mattered? And do the numbers hold: recompute the intermediate values
+   yourself rather than reading them for plausibility. Nothing upstream ran this
+   arithmetic — a worked example whose numbers do not add up destroys an explainer the
+   way a fabricated citation destroys a report.
 
 4. **Unexplained design choices.** Where the mechanism has a deliberate choice, does the
    article say what breaks without it, or does it just assert the formula? An explainer
@@ -51,13 +52,15 @@ Read the whole article. Then check, in this order — the earlier items weigh mo
 
 ## Verdict
 
-Return `verdict@v1`. `revise` if anything from items 1–3 stands, or if the brief is not
-covered. `approved` only when you would put your own name on the article.
+Return `verdict@v1`. Exactly two values exist: `revise` if anything from items 1–3 stands
+or the brief is not covered, and `ok` when you would put your own name on the article.
+Not `approved`, not `pass`, not `accept` — the calling script branches on the literal
+string, and a synonym costs a round.
 
 - One issue per defect, each with the quote it refers to and what would make it right.
   A remark the writer cannot act on without asking you a question is not finished.
 - Order issues by weight, gravest first.
-- Do not pad. A short article that is correct and teaches well gets `approved` with an
+- Do not pad. A short article that is correct and teaches well gets `ok` with an
   empty issue list, and that is a real outcome — inventing remarks to look thorough sends
   a good draft back for nothing.
 - Do not rewrite the article. You say what is wrong and why; the writer writes.
