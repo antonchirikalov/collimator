@@ -245,15 +245,36 @@ const ANALYSIS = {
   },
 }
 
+// The writer's ledger. `changes` alone let a remark disappear: five of them came back word for
+// word in two consecutive rounds of a live run because the schema asked what was done and never
+// what was left. `addressed` is the field that cannot be filled without going through the list,
+// and the script checks the numbers against the ones it sent — a claim the caller can verify is
+// worth more than an instruction the caller can only hope was followed.
 const ARTICLE = {
   type: 'object',
-  required: ['changes'],
+  required: ['changes', 'addressed'],
   properties: {
     // No counts from the writer: measuring characters is the gate's job, not a model's.
     changes: {
       type: 'array',
       items: { type: 'string' },
-      description: 'what you changed in response to the remarks; empty on the first round',
+      description: 'what you changed beyond the numbered remarks; empty is a fine answer',
+    },
+    addressed: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['item', 'status', 'note'],
+        properties: {
+          item: { type: 'number', description: 'the number of the remark, as it was given' },
+          status: { type: 'string', enum: ['fixed', 'declined'] },
+          note: {
+            type: 'string',
+            description: 'what you did, or — for declined — why you deliberately did not',
+          },
+        },
+      },
+      description: 'one entry per numbered remark; empty only on the first round, which has none',
     },
   },
 }
@@ -501,6 +522,10 @@ let styleRemarks = []
 // The measurement, kept past the iteration that took it: the next round is told its budget in
 // characters, and only the gate knows how many there are.
 let measuredProse = null
+// Remarks the writer left unanswered or declined. They travel to the next round because this
+// round's critics judge the NEW draft and will not repeat a remark they consider settled —
+// while an item nobody answered is settled by nobody.
+let carried = []
 if (cfg.fresh) {
   log('[resume] config.fresh — всё пересобирается с нуля, ничего не переиспользуется')
 } else {
@@ -802,29 +827,51 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
           `the sources carry, not by restating what the article already says.\n\n`
         : ''
 
-  // A verdict of `ok` with remarks means "publishable, and here are some notes". Replaying
-  // those notes as work orders is what filled the round that was supposed to shorten the text.
-  const substanceHeader =
-    verdict && verdict.verdict === 'ok'
-      ? `THE CRITIC ON SUBSTANCE passed this draft. The notes below are OPTIONAL — take one ` +
-        `only if it costs no length:`
-      : `THE CRITIC ON SUBSTANCE:`
+  // ONE numbered list, not three. Each section used to number from 1, so "item 3" meant three
+  // different things and nothing could be checked. Now the number is the identity of a remark
+  // for this round, and the writer answers by number.
+  // On a genuine first pass there is nothing to report yet and no verdict to read: `verdict` is
+  // still null there, and reaching into it is how the previous version of this list crashed two
+  // of the three stub paths.
+  const isFirstPass = round === 1 && startRound === 1
+  const items = isFirstPass
+    ? []
+    : [
+        ...carried.map((text) => ({ source: 'CARRIED', text })),
+        ...gateProblems.map((text) => ({ source: 'GATE', text })),
+        ...((verdict && verdict.remarks) || []).map((text) => ({ source: 'SUBSTANCE', text })),
+        ...styleRemarks.map((text) => ({ source: 'STYLE', text })),
+      ]
 
-  const revision =
-    round === 1
-      ? null
-      : budget +
-        (gateProblems.length
-          ? `THE GATE (a deterministic check, not an opinion — act on all of it):\n` +
-            gateProblems.map((p, i) => `${i + 1}. ${p}`).join('\n') +
-            '\n\n'
-          : '') +
-        `${substanceHeader}\n` +
-        verdict.remarks.map((r, i) => `${i + 1}. ${r}`).join('\n') +
-        (styleRemarks.length
-          ? `\n\nTHE STYLE CRITIC (the author's voice, machine patterns):\n` +
-            styleRemarks.map((r, i) => `${i + 1}. ${r}`).join('\n')
-          : '')
+  // Five remarks came back word for word identical in rounds 4 and 5 of a live run — same
+  // corpus named wrongly, same unsourced config values, same line missing from a code quote
+  // called complete. The writer had them twice and dropped them twice, and nothing in its
+  // contract made that visible: the schema asked what it changed, never what it left. So the
+  // round now hands it a numbered ledger and demands one line back per number. A remark can be
+  // declined — the length budget may forbid the only available fix — but it cannot vanish.
+  const ledgerRule = items.length
+    ? `\n\nHOW TO ANSWER. Return one entry per numbered item above, and account for every ` +
+      `number from 1 to ${items.length}. Status \`fixed\` when the draft now satisfies it, ` +
+      `\`declined\` when you deliberately did not act — and then the note says why, in one ` +
+      `sentence. Do not answer an item you did not act on with \`fixed\`: the next round is ` +
+      `given whatever you leave open, and the run reports it. An item you silently skip comes ` +
+      `back identical next round, which is how five of these were carried three rounds.`
+    : ''
+
+  // No items, no revision block. Cleaner than keying off the round number: a resumed run whose
+  // records held nothing open has nothing to say to the writer either.
+  const revision = !items.length
+    ? null
+    : budget +
+        `REMARKS ON THE PREVIOUS DRAFT. ` +
+        (verdict && verdict.verdict === 'ok'
+          ? `The critic on substance passed it, so SUBSTANCE items are optional — take one only ` +
+            `if it costs no length. GATE and STYLE items are not optional.`
+          : `GATE items are arithmetic and are not open to argument; SUBSTANCE and STYLE items ` +
+            `are judgements you may decline with a reason.`) +
+        `\n\n` +
+        items.map((it, i) => `${i + 1}. [${it.source}] ${it.text}`).join('\n') +
+        ledgerRule
 
   // A draft already on disk is a draft nobody has judged yet, and rewriting it from scratch
   // throws away the most expensive agent in the run. So the first round skips the writer and
@@ -846,6 +893,39 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
     )
     log(`[write/${round}] changes=${article.changes.length}`)
     for (const c of article.changes) log(`[write/${round}/change] ${c}`)
+
+    // The ledger, checked against the numbers the script itself handed over. Everything below
+    // is arithmetic on what came back — the writer's own account of a remark is the only thing
+    // being trusted, and even that is only trusted where it is present.
+    const answered = new Map()
+    for (const a of article.addressed) {
+      if (a.item >= 1 && a.item <= items.length) answered.set(a.item, a)
+    }
+    const declined = []
+    const unanswered = []
+    for (let n = 1; n <= items.length; n++) {
+      const entry = answered.get(n)
+      if (!entry) {
+        unanswered.push(items[n - 1])
+        continue
+      }
+      log(`[write/${round}/${entry.status}] ${n}. [${items[n - 1].source}] ${entry.note}`)
+      if (entry.status === 'declined') declined.push(items[n - 1])
+    }
+    if (unanswered.length) {
+      log(
+        `[write/${round}] БЕЗ ОТВЕТА ${unanswered.length} из ${items.length} замечаний — ` +
+          `они уходят в следующий круг и в отчёт`,
+      )
+      for (const it of unanswered) log(`[write/${round}/без-ответа] [${it.source}] ${it.text}`)
+    }
+    if (declined.length) {
+      log(`[write/${round}] отклонено с обоснованием: ${declined.length}`)
+    }
+    // Carried forward by hand, because the critics of this round judge the NEW draft and will
+    // not repeat a remark they consider settled. An item the writer never answered is not
+    // settled by anybody.
+    carried = [...unanswered, ...declined].map((it) => `${it.source} (перенесено): ${it.text}`)
   }
 
   // Measure before judging, so neither critic spends a remark on something already counted.
@@ -960,6 +1040,7 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
     ...verdict.remarks,
     ...styleRemarks.map((r) => `Style: ${r}`),
     ...gateProblems.map((p) => `Gate: ${p}`),
+    ...carried.map((c) => `Carried: ${c}`),
   ]
   const recordedRound = await agent(
     record(
@@ -1004,6 +1085,7 @@ const openItems = [
   ...verdict.remarks,
   ...styleRemarks.map((r) => `Style: ${r}`),
   ...gateProblems.map((p) => `Gate: ${p}`),
+  ...carried.map((c) => `Carried: ${c}`),
 ]
 if (openItems.length) {
   const passed = verdict.verdict === 'ok' && stylePassed && !gateProblems.length
