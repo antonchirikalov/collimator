@@ -173,3 +173,52 @@ def test_empty_round_record_is_a_real_round_with_no_remarks(
     report, _ = run(capsys, monkeypatch, "--dir", str(tmp_path))
     assert report["measures"]["last_round"] == 1
     assert report["rounds"][0]["remarks"] == []
+
+
+# --- --last-only: границы канала через агента -----------------------------------------
+
+
+def test_last_only_emits_one_round_but_counts_all(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Вывод едет обратно через агента, а у агента есть бюджет.
+
+    Пять кругов дословных замечаний — около сотни килобайт JSON; носильщик вернул два круга
+    вместо пяти, скрипт прочитал это как «пройдено два» и прогнал четыре круга вместо одного.
+    Счётчики обязаны остаться полными, текст — только у последнего круга.
+    """
+    for n in (1, 2, 3, 4, 5):
+        write_round(tmp_path, n, f"Round {n} — verdict=revise style=revise", [f"замечание {n}"])
+    report, _ = run(capsys, monkeypatch, "--dir", str(tmp_path), "--last-only")
+    assert report["measures"] == {"rounds": 5, "last_round": 5}
+    assert len(report["rounds"]) == 1
+    assert report["rounds"][0]["round"] == 5
+    assert report["rounds"][0]["remarks"] == ["замечание 5"]
+
+
+def test_last_only_on_empty_directory_emits_nothing(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report, _ = run(capsys, monkeypatch, "--dir", str(tmp_path), "--last-only")
+    assert report["rounds"] == []
+    assert report["measures"]["last_round"] == 0
+
+
+def test_last_only_keeps_reporting_a_gap(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Урезанный вывод не должен прятать потерянную запись — иначе круг пропадёт молча."""
+    write_round(tmp_path, 1, "Round 1 — verdict=revise style=revise", ["x"])
+    write_round(tmp_path, 3, "Round 3 — verdict=revise style=revise", ["y"])
+    report, _ = run(capsys, monkeypatch, "--dir", str(tmp_path), "--last-only")
+    assert report["ok"] is False
+    assert any("not consecutive" in p for p in report["problems"])
+
+
+def test_full_output_is_still_the_default(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    for n in (1, 2, 3):
+        write_round(tmp_path, n, f"Round {n} — verdict=ok style=ok", ["x"])
+    report, _ = run(capsys, monkeypatch, "--dir", str(tmp_path))
+    assert len(report["rounds"]) == 3

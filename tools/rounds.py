@@ -100,16 +100,34 @@ def collect(directory: Path) -> tuple[list[dict[str, object]], list[str]]:
 def main() -> int:
     p = argparse.ArgumentParser(description="Read the round records of a revision loop.")
     p.add_argument("--dir", type=Path, required=True, help="directory holding round-<n>.md")
+    p.add_argument(
+        "--last-only",
+        action="store_true",
+        help="emit only the newest round in `rounds`; counts still cover all of them",
+    )
     p.add_argument("--strict", action="store_true", help="also exit 1 when a record is broken")
     args = p.parse_args()
 
     rounds, problems = collect(args.dir)
     last = max((int(str(r["round"])) for r in rounds), default=0)
+
+    # Why --last-only exists, and why the workflow always passes it. The output of this script
+    # travels back through an agent, and an agent is a channel with a budget: five rounds of
+    # verbatim remarks is about a hundred kilobytes of JSON, and the carrier silently returned
+    # two rounds instead of five. The script read that as "two rounds done", restarted the loop
+    # at three, and ran four rounds where one was due — 1.4 million tokens.
+    #
+    # Nothing downstream needs the older rounds' text: the loop continues from the newest one
+    # and counts the rest. So the payload is bounded here rather than hoped about there. The
+    # full form stays the default, because a person reading the whole history wants all of it
+    # and a terminal has no such budget.
+    emitted = rounds[-1:] if args.last_only else rounds
+
     report = {
         "ok": not problems,
         "problems": problems,
         "measures": {"rounds": len(rounds), "last_round": last},
-        "rounds": rounds,
+        "rounds": emitted,
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if (problems and args.strict) else 0

@@ -559,7 +559,7 @@ if (cfg.fresh) {
 
   // The rounds already judged. Recovered from disk rather than from the process cache, for the
   // same reason as everything else here: the cache does not outlive the process.
-  const recorded = await agent(commands([`${ROUNDS_TOOL} --dir ${ROUNDS_DIR}`]), {
+  const recorded = await agent(commands([`${ROUNDS_TOOL} --dir ${ROUNDS_DIR} --last-only`]), {
     agentType: 'gate-runner',
     model: MODELS.gate,
     label: 'resume:rounds',
