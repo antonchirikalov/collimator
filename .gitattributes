@@ -1,0 +1,6 @@
+# The workflow runtime refuses a script carrying CR: a carriage return is a control
+# character, and the approval dialog will not show a script it cannot render in full. On
+# Windows with autocrlf a checkout puts CRLF back into every file, so the scripts state
+# their line ending here rather than depending on a global git setting.
+*.js text eol=lf
+*.mjs text eol=lf
