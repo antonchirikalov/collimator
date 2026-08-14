@@ -21,6 +21,13 @@ Read the whole article. Then check, in this order — the earlier items weigh mo
    not marked as the author's own framing. Check the ones that look authoritative: exact
    values are exactly what readers copy.
 
+   Unless your task says a fact checker has already run this round. Then it has the notes and
+   you have the analysis, this item is its job, and a remark of the form "no source supports
+   this" is one you cannot ground and it cannot act on. Doing it anyway is how this role ended
+   up doing two jobs and the second one badly: attribution errors survived three rounds of a
+   live run under a critic that was also judging the mechanism, the example, the coverage and
+   the order of introduction.
+
 3. **The worked example.** Does it demonstrate what the text says it demonstrates? Does
    the example's shape match the mechanism described, or does it quietly simplify away
    the part that mattered? And do the numbers hold: recompute the intermediate values

@@ -790,8 +790,15 @@ if (analysis) {
 
 // --- Verify: a claimed path is not an artifact until something looks at the disk --------------
 
+// Skipped when nothing ran. This stage exists to check that agents which just executed left
+// their files behind; on a fully reused run no agent executed, and `resume` measured the very
+// same paths a moment ago. Re-measuring them is a probe that can only confirm what is already
+// known.
 phase('Verify')
-let existence = must(
+const nothingRan = found.every((f) => f.reused) && present.has(MATERIAL_PATH)
+let existence = nothingRan
+  ? { checks: [...found.map(() => ({ ok: true, problems: [] })), { ok: true, problems: [] }] }
+  : must(
   await agent(existenceCommands([...found.map((f) => f.path), MATERIAL_PATH]), {
     agentType: 'gate-runner',
     model: MODELS.gate,
@@ -799,8 +806,11 @@ let existence = must(
     phase: 'Verify',
     schema: EXISTENCE,
   }),
-  'verify:1 — without the disk check this stage means nothing',
-)
+      'verify:1 — without the disk check this stage means nothing',
+    )
+if (nothingRan) {
+  log('[verify] ничего не запускалось, всё переиспользовано — проверка диска не повторяется')
+}
 const verifyPaths = [...found.map((f) => f.path), MATERIAL_PATH]
 existence.checks.forEach((c, i) => {
   log(
@@ -1114,12 +1124,24 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
       `than repeating the original remark. Repeating it unchanged costs a round and moves ` +
       `nothing.`
     : ''
-  const criticInputs = [
-    { port: 'brief', path: BRIEF_PATH },
-    { port: 'draft', path: ARTICLE_PATH },
-    { port: 'material', path: MATERIAL_PATH },
-    ...sourcePorts,
-  ]
+  // The mechanism critic reads the analysis, not the raw notes. Checking a claim against the
+  // note that carries it belongs to the fact checker that ran two stages ago — and while both
+  // did it, one agent was doing two jobs and doing the second one badly: attribution errors
+  // survived three rounds under a critic that also had to judge the mechanism, the example, the
+  // coverage and the order of introduction. Dropping the note ports also halves what this call
+  // reads every round, which on a 105 KB analysis and 90 KB of notes is most of its cost.
+  const criticInputs = USE_CORRECTORS
+    ? [
+        { port: 'brief', path: BRIEF_PATH },
+        { port: 'draft', path: ARTICLE_PATH },
+        { port: 'material', path: MATERIAL_PATH },
+      ]
+    : [
+        { port: 'brief', path: BRIEF_PATH },
+        { port: 'draft', path: ARTICLE_PATH },
+        { port: 'material', path: MATERIAL_PATH },
+        ...sourcePorts,
+      ]
 
   const [judged, styled] = await parallel([
     () =>
@@ -1135,6 +1157,13 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
               : `The order set no length, so length is not a defect here.`) +
             ` Typography, rhythm and the author's voice belong to a style critic running` +
             ` beside you in this same round — leave them to it.` +
+            (USE_CORRECTORS
+              ? ` The article's claims have already been checked against the source notes by a` +
+                ` fact checker in this same round, and its worked example has been recomputed:` +
+                ` you have the analysis rather than the notes, and a remark of the form "no note` +
+                ` supports this" is not yours to make. Judge the mechanism, the teaching, the` +
+                ` order of introduction and the coverage of the brief.`
+              : '') +
             (lastRound ? ' This is the last revision round; there are no more.' : '') +
             declinedBlock,
         }),
