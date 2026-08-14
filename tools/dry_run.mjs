@@ -11,11 +11,15 @@
 // happy path, "bad" makes every boolean false so the retry, unresolved and gate-failure
 // branches execute too.
 //
-// Usage: node tools/dry_run.mjs <script.js> [ok|bad]
+// Usage: node tools/dry_run.mjs <script.js> [ok|bad] ['{"runDir":"dry/run",...}']
+//
+// The third argument is the `args` the script receives, as JSON. Scripts that validate
+// their input reject the default, and that rejection is itself worth exercising.
 
 import { readFileSync } from 'node:fs'
 
-const [, , target, mode = 'ok'] = process.argv
+const [, , target, mode = 'ok', argsJson] = process.argv
+const runArgs = argsJson ? JSON.parse(argsJson) : { runDir: 'dry/run' }
 const happy = mode !== 'bad'
 
 const source = readFileSync(target, 'utf8').replace(/^export\s+const\s+meta/m, 'const meta')
@@ -85,7 +89,7 @@ const calls = []
 const logs = []
 
 const stubs = {
-  args: { runDir: 'dry/run' },
+  args: runArgs,
   agent: async (prompt, opts = {}) => {
     calls.push(opts.label ?? '(no label)')
     if (typeof prompt !== 'string') throw new Error(`prompt is ${typeof prompt}, not a string`)

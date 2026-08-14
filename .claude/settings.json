@@ -13,7 +13,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python -X utf8 tools/gate_hook.py"
+            "command": "python -X utf8 tools/stop_audit.py"
           }
         ]
       }
