@@ -135,10 +135,14 @@ function must(value, what) {
 
 // A critic that died is not a critic that approved. Silent passes are the failure this
 // pipeline exists to prevent, so a missing verdict becomes `revise` plus an open item.
+//
+// English, like every other string in this file that an agent can read. Russian in this
+// script is reserved for what only the person running it sees: log() lines, thrown errors,
+// and the meta block the interface renders.
 function noVerdict(who) {
   return {
     verdict: 'revise',
-    remarks: [`${who} не вернул вердикт — это незакрытый пункт, а не молчаливое согласие`],
+    remarks: [`${who} returned no verdict — that is an open item, not silent agreement`],
   }
 }
 
@@ -185,7 +189,7 @@ const FOUND = {
         properties: { title: { type: 'string' }, url: { type: 'string' } },
       },
     },
-    tool_used: { type: 'string', description: 'точное имя инструмента поиска, как в вызове' },
+    tool_used: { type: 'string', description: 'exact name of the search tool, as called' },
   },
 }
 
@@ -207,7 +211,7 @@ const ARTICLE = {
     changes: {
       type: 'array',
       items: { type: 'string' },
-      description: 'что изменено по замечаниям; на первом круге пустой список',
+      description: 'what you changed in response to the remarks; empty on the first round',
     },
   },
 }
@@ -239,14 +243,14 @@ const STYLE_VERDICT = {
         bold_spans: {
           type: 'array',
           items: { type: 'string' },
-          description: 'каждый жирный фрагмент прозы дословно, вместе со звёздочками',
+          description: 'every bold span in the prose, verbatim, asterisks included',
         },
         dead_phrases: {
           type: 'array',
           items: { type: 'string' },
-          description: 'каждый найденный штамп дословно, как он стоит в тексте',
+          description: 'every dead phrase found, verbatim as it stands in the text',
         },
-        hyphen_for_dash: { type: 'number', description: 'дефисов в роли тире, точное число' },
+        hyphen_for_dash: { type: 'number', description: 'hyphens standing in for a dash, exact' },
       },
     },
     findings: {
@@ -255,9 +259,9 @@ const STYLE_VERDICT = {
         type: 'object',
         required: ['quote', 'reason', 'after'],
         properties: {
-          quote: { type: 'string', description: 'фрагмент статьи ДОСЛОВНО' },
-          reason: { type: 'string', description: 'какой критерий нарушен и почему' },
-          after: { type: 'string', description: 'как это должно звучать' },
+          quote: { type: 'string', description: 'the passage from the article, VERBATIM' },
+          reason: { type: 'string', description: 'which criterion is violated and why' },
+          after: { type: 'string', description: 'how it should read instead' },
         },
       },
     },
@@ -470,7 +474,7 @@ const materialCheck = existence.checks.find((c) => c.path.includes('material'))
 if (materialCheck && !materialCheck.ok) {
   log(`[verify] МАТЕРИАЛ НЕ СОЗДАН, круг повтора: ${materialCheck.problems.join('; ')}`)
   analysis = await agent(
-    `Предыдущая попытка не оставила файла на диске: ${materialCheck.problems.join('; ')}\n\n` +
+    `The previous attempt left no file on disk: ${materialCheck.problems.join('; ')}\n\n` +
       analyseTask,
     {
       agentType: 'domain-analyst',
@@ -528,14 +532,14 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
     round === 1
       ? null
       : (gateProblems.length
-          ? `Гейт (детерминированная проверка, не мнение — выполнить обязательно):\n` +
+          ? `THE GATE (a deterministic check, not an opinion — act on all of it):\n` +
             gateProblems.map((p, i) => `${i + 1}. ${p}`).join('\n') +
             '\n\n'
           : '') +
-        `Замечания критика по существу:\n` +
+        `THE CRITIC ON SUBSTANCE:\n` +
         verdict.remarks.map((r, i) => `${i + 1}. ${r}`).join('\n') +
         (styleRemarks.length
-          ? `\n\nЗамечания стилевого критика (голос автора, машинные паттерны):\n` +
+          ? `\n\nTHE STYLE CRITIC (the author's voice, machine patterns):\n` +
             styleRemarks.map((r, i) => `${i + 1}. ${r}`).join('\n')
           : '')
 
@@ -561,7 +565,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   })
   const sizedReport = sized
     ? sized.report
-    : { ok: false, problems: ['гейт не отработал — измерений за этот круг нет'], measures: {} }
+    : { ok: false, problems: ['the gate did not run — no measurements for this round'], measures: {} }
   gateProblems = sizedReport.problems
   log(
     `[gate/${round}] ok=${sizedReport.ok} проблем=${gateProblems.length} ` +
@@ -613,7 +617,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
           extra:
             `A deterministic gate has already run over this draft with the presets` +
             ` ru_slop and no_bold, and reported: ` +
-            `${gateProblems.length ? gateProblems.join('; ') : 'ничего не найдено'}.` +
+            `${gateProblems.length ? gateProblems.join('; ') : 'nothing found'}.` +
             ` Confirm what it found by quoting it, and spend your own rounds on what a` +
             ` regex cannot reach — rhythm, address, terminology, the author's voice.` +
             (lastRound ? ' This is the last revision round; there are no more.' : ''),
@@ -628,16 +632,17 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
       ),
   ])
 
-  verdict = judged || noVerdict('критик по существу')
+  verdict = judged || noVerdict('the critic on substance')
   log(`[critic/${round}] вердикт=${verdict.verdict} замечаний=${verdict.remarks.length}`)
   for (const r of verdict.remarks) log(`[critic/${round}/замечание] ${r}`)
 
   styleVerdict = styled || null
   if (styled) {
     // A finding is stored as one line the writer can act on: quote, why, and what it should
-    // say instead. The style critic's own before/after wording is kept — a paraphrase here
+    // say instead. The critic's own wording is kept verbatim and the joiners are punctuation
+    // rather than words — the findings are Russian, this file is not, and a paraphrase here
     // would hand the writer an edit nobody checked.
-    styleRemarks = styled.findings.map((f) => `«${f.quote}» — ${f.reason}. Стало: ${f.after}`)
+    styleRemarks = styled.findings.map((f) => `«${f.quote}» — ${f.reason} → ${f.after}`)
     const c = styled.counters
     log(
       `[style/${round}] вердикт=${styled.verdict} находок=${styleRemarks.length} ` +
@@ -648,7 +653,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
     for (const phrase of c.dead_phrases) log(`[style/${round}/штамп] ${phrase}`)
     for (const r of styleRemarks) log(`[style/${round}/замечание] ${r}`)
   } else {
-    styleRemarks = noVerdict('стилевой критик').remarks
+    styleRemarks = noVerdict('the style critic').remarks
     log(`[style/${round}] СТИЛЕВОЙ КРИТИК НЕ ВЕРНУЛ ВЕРДИКТ — считаем круг незакрытым`)
   }
 
@@ -667,8 +672,8 @@ let unresolvedPath = null
 const stylePassed = Boolean(styleVerdict) && styleVerdict.verdict === 'ok'
 const openItems = [
   ...verdict.remarks,
-  ...styleRemarks.map((r) => `Стиль: ${r}`),
-  ...gateProblems.map((p) => `Гейт: ${p}`),
+  ...styleRemarks.map((r) => `Style: ${r}`),
+  ...gateProblems.map((p) => `Gate: ${p}`),
 ]
 if (openItems.length) {
   const passed = verdict.verdict === 'ok' && stylePassed && !gateProblems.length
@@ -707,7 +712,7 @@ const gate = await agent(carry(gateCommand(ARTICLE_PATH, minProse, maxProse)), {
 })
 const report = gate
   ? gate.report
-  : { ok: false, problems: ['финальный гейт не отработал'], measures: {} }
+  : { ok: false, problems: ['the final gate did not run'], measures: {} }
 log(`[gate] ok=${report.ok} измерения=${JSON.stringify(report.measures)}`)
 for (const p of report.problems) log(`[gate/проблема] ${p}`)
 

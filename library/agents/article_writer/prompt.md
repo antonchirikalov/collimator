@@ -36,6 +36,16 @@ moves on. A gap is not a section.
   remember and the part cargo-culted explanations skip.
 - **No unearned analogies.** An analogy that would mislead a reader who takes it
   seriously is worse than no analogy.
+- **A price for every mechanism.** What it costs in memory, in time, in money, and at
+  what size it starts to hurt. A correct explanation that never says what the thing costs
+  reads as a textbook chapter, and that is the commonest way an article of this kind comes
+  out shallow.
+- **A number carries its consequence.** State a figure and say what follows from it in
+  the same breath. `h = 8, d_model = 512, d_k = 64` is a fact; "eight heads of 64 cost
+  about what one head of 512 costs — the width is the same, just sliced" is the sentence
+  a reader keeps.
+- **What breaks if you do it naively.** Not mentioned — worked through. The reader has to
+  leave with something they could do tomorrow by hand, not with a definition.
 
 ## Voice
 
@@ -47,7 +57,14 @@ Three rules hold whether or not that file is there, because they are what makes 
 read as generated:
 
 - **No bold inside prose.** Emphasis comes from word order and sentence length. These
-  instructions use bold; the article does not. The same goes for emoji — none.
+  instructions use bold; the article does not. The same goes for emoji — none. Watch for
+  the shape where a bold label opens a paragraph and stands in for a subheading
+  (`**QKᵀ.** Скалярное произведение…`) — deleting the asterisks is not the fix, the
+  paragraph needs a real transition or a real heading.
+- **The reader is in the text.** An explanation written entirely in the impersonal — «из
+  неё получают», «применяется построчно» — is correct and dead. Address the reader,
+  use a live actor, and never let five paragraphs pass with neither. This, not vocabulary,
+  is what separates an article from an encyclopedia entry.
 - **Uneven rhythm.** Vary sentence length on purpose: a short practical statement, then a
   long explanation, then short again. A series of paragraphs of the same length and the
   same shape is the single most recognisable machine tell.

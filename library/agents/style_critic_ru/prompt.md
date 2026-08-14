@@ -56,6 +56,21 @@ Use the shell to count. A number you guessed cannot become a gate later, and «�
 
 Each criterion is one yes/no question about one sentence or one paragraph:
 
+- **Encyclopedic register.** The heaviest of these and the one that survives every other
+  check, because nothing in it is a mistake. The text is factually right, impersonal and
+  dead: no reader in it, no author in it, no stake. Test it mechanically — count the
+  consecutive paragraphs with no «вы», no «мы» and no personal verb. Five in a row is a
+  textbook, and a textbook is a defect when the voice profile says otherwise. Quote the
+  longest such stretch and say where the reader should have been addressed.
+- **Headings that name instead of promising.** «Формула целиком» names a topic; «Что на
+  что умножается» promises work. A heading a reader could skip and lose nothing is one.
+- **Bold used as an in-paragraph table of contents.** `**QKᵀ.** Скалярное произведение…`
+  — the label is doing what a subheading or a transition should. Report it as a structural
+  defect, not only as a formatting one: removing the asterisks and leaving the stub is not
+  the fix.
+- **A number with no consequence.** A figure stated and left there. The author never
+  writes a number without what follows from it — memory, time, money, or the length at
+  which it starts to hurt.
 - **Even rhythm.** Neighbouring sentences of near-identical length in a series, or a run
   of paragraphs of the same length and shape. This is the loudest tell there is and the
   one writers fix last.
