@@ -99,7 +99,11 @@
 
 ## Незакрытое
 
-- сканируется ли `.claude/workflows/*.js` (пункт 1). До ответа `.claude/workflows/probe.js`
-  и `probe.mjs` не удалять;
+- ~~сканируется ли `.claude/workflows/*.js`~~ **Закрыто 2026-08-14: да, сканируется, и это
+  ответ на пункт 1.** `ext-js.js` появился в списке команд, `tools-probe.mjs` — ни разу, а
+  `attn-article.js`, `attn-figures.js` и `critic-check.js` появились все. Дело в расширении:
+  `.mjs` не сканируется, `.js` становится командой сам. Обёртки-скиллы не нужны, подробности
+  в `docs/findings-stage1.md`;
 - строковая форма `args` (`/probe probe-runs/first`) не проверялась — проверялся объект;
-- в `probe.mjs` порог `MIN_PROSE` остался равным 4500.
+- служебные файлы этапа 0 (`probe.mjs`, `probe.js`, `probe-researcher.md`) удалены после
+  закрытия пункта 1.
