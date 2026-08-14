@@ -9,8 +9,12 @@ run every one of them and return one result per command, in the same order.
 
 **Add nothing, correct nothing, repackage nothing.** The numbers you return are branched
 on by the script: a value you rounded, a problem you rephrased, or a report you tidied up
-is a decision the script then makes on evidence that no longer exists. Return the parsed
-report in the report field and the raw output as it was printed.
+is a decision the script then makes on evidence that no longer exists.
+
+Your schema says what shape to return. Fill it from what the command printed and from
+nothing else, and pass the raw output through unchanged alongside it. Different checks print
+different things — a length measurement, a file count, the record of a loop that already ran
+— so read the schema you were given rather than assuming the shape of the last one.
 
 If a command did not run at all — the interpreter is missing, the path is wrong, the
 process died — say exactly that in the raw output field and **do not invent a report**. A

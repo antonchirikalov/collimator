@@ -59,6 +59,12 @@ const MATERIAL_PATH = `${run}/material.md`
 const ARTICLE_PATH = `${run}/article.md`
 const UNRESOLVED_PATH = `${run}/UNRESOLVED.md`
 const sourcePathOf = (slug) => `${run}/sources/${slug}.md`
+// One file per revision round. The article survives a restart because an agent wrote it; the
+// verdicts on it did not, because they lived only in what an agent returned. So each round is
+// recorded, and a run that comes back does not pay two opus critics to re-judge a draft they
+// already judged — and MAX_ROUNDS becomes a property of the article rather than of the launch.
+const ROUNDS_DIR = `${run}/rounds`
+const roundPathOf = (n) => `${ROUNDS_DIR}/round-${n}.md`
 
 // --- Configuration: everything a caller can change without editing this file ---------------
 //
@@ -112,6 +118,7 @@ const MODELS = Object.assign(
 // The gate is this repository's own script, so the invocation is a default rather than a
 // constant: a pipeline vendored elsewhere keeps the stage and changes the path.
 const GATE_TOOL = cfg.gateTool || 'python -X utf8 tools/gate.py'
+const ROUNDS_TOOL = cfg.roundsTool || 'python -X utf8 tools/rounds.py'
 
 // Length is not defaulted, and that is deliberate rather than an omission. When the order
 // says nothing about size, the gate still measures the article and reports the numbers but
@@ -327,6 +334,31 @@ const GATE = {
   properties: { report: REPORT, stdout: { type: 'string' } },
 }
 
+// What rounds.py prints. The envelope matches the gate's so the carrying agent sees a shape it
+// already knows; `rounds` is the part the loop actually continues from.
+const ROUNDS = {
+  type: 'object',
+  required: ['report', 'rounds'],
+  properties: {
+    report: REPORT,
+    rounds: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['round', 'verdict', 'style_verdict', 'remarks', 'style', 'gate'],
+        properties: {
+          round: { type: 'number' },
+          verdict: { type: 'string' },
+          style_verdict: { type: 'string' },
+          remarks: { type: 'array', items: { type: 'string' } },
+          style: { type: 'array', items: { type: 'string' } },
+          gate: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    },
+  },
+}
+
 const EXISTENCE = {
   type: 'object',
   required: ['checks'],
@@ -449,6 +481,13 @@ for (const a of brief.aspects) log(`[brief/aspect] ${a.slug}: ${a.question}`)
 // artifacts on disk were written for a different one.
 const sourcePaths = brief.aspects.map((a) => sourcePathOf(a.slug))
 let present = new Set()
+// Seeded by the Resume phase below when a previous launch got further than this one.
+let startRound = 1
+let priorRounds = []
+let verdict = null
+let styleVerdict = null
+let gateProblems = []
+let styleRemarks = []
 if (cfg.fresh) {
   log('[resume] config.fresh — всё пересобирается с нуля, ничего не переиспользуется')
 } else {
@@ -468,6 +507,38 @@ if (cfg.fresh) {
       `/${sourcePaths.length}, материал=${present.has(MATERIAL_PATH)} ` +
       `черновик=${present.has(ARTICLE_PATH)}`,
   )
+
+  // The rounds already judged. Recovered from disk rather than from the process cache, for the
+  // same reason as everything else here: the cache does not outlive the process.
+  const recorded = await agent(commands([`${ROUNDS_TOOL} --dir ${ROUNDS_DIR}`]), {
+    agentType: 'gate-runner',
+    model: MODELS.gate,
+    label: 'resume:rounds',
+    phase: 'Resume',
+    schema: ROUNDS,
+  })
+  // A record that does not parse is not trusted into the loop: continuing from a guessed round
+  // number would skip a revision the brief paid for. Broken records are announced and ignored.
+  if (recorded && recorded.report && !recorded.report.ok) {
+    for (const problem of recorded.report.problems) {
+      log(`[resume/rounds] ЗАПИСЬ КРУГОВ ИСПОРЧЕНА, не доверяем: ${problem}`)
+    }
+  } else if (recorded && recorded.rounds.length) {
+    priorRounds = recorded.rounds
+    const last = priorRounds[priorRounds.length - 1]
+    startRound = last.round + 1
+    verdict = { verdict: last.verdict, remarks: last.remarks }
+    styleVerdict = { verdict: last.style_verdict }
+    styleRemarks = last.style
+    gateProblems = last.gate
+    log(
+      `[resume/rounds] кругов уже пройдено ${priorRounds.length}, продолжаем с ${startRound}: ` +
+        `вердикт=${last.verdict} стиль=${last.style_verdict} ` +
+        `замечаний=${last.remarks.length}+${last.style.length} гейт=${last.gate.length}`,
+    )
+  } else {
+    log('[resume/rounds] записей о кругах нет, начинаем с первого')
+  }
 }
 
 // --- Research: the fan-out lives in the script; an agent never produces a collection ---------
@@ -624,13 +695,15 @@ if (materialCheck && !materialCheck.ok) {
 // slower of them instead of their sum.
 
 phase('Write')
-let verdict = null
-let styleVerdict = null
-let gateProblems = []
-let styleRemarks = []
-let rounds = 0
+let rounds = startRound - 1
+if (startRound > MAX_ROUNDS) {
+  log(
+    `[write] круги исчерпаны предыдущими запусками (${rounds} из ${MAX_ROUNDS}), ` +
+      `писатель не запускается — идём сразу к отчёту`,
+  )
+}
 
-for (let round = 1; round <= MAX_ROUNDS; round++) {
+for (let round = startRound; round <= MAX_ROUNDS; round++) {
   rounds = round
   const writeInputs = [
     { port: 'brief', path: BRIEF_PATH },
@@ -660,7 +733,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   // throws away the most expensive agent in the run. So the first round skips the writer and
   // goes straight to the gate and the critics; from the second round on the writer always
   // runs, because by then there are remarks to act on.
-  const skipWriter = round === 1 && present.has(ARTICLE_PATH)
+  const skipWriter = round === 1 && startRound === 1 && present.has(ARTICLE_PATH)
   if (skipWriter) {
     log('[write/1] черновик уже на диске, писатель не запускается — сразу гейт и критики')
   } else {
@@ -780,11 +853,46 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
     log(`[style/${round}] THE STYLE CRITIC RETURNED NO VERDICT — the round counts as open`)
   }
 
+  // The round goes on the record before anything decides what to do with it. Written here
+  // rather than at the end of the run on purpose: the point is to survive a process that dies
+  // mid-loop, and a record written after the loop would die with it.
+  const styleOk = Boolean(styled) && styled.verdict === 'ok'
+  const roundItems = [
+    ...verdict.remarks,
+    ...styleRemarks.map((r) => `Style: ${r}`),
+    ...gateProblems.map((p) => `Gate: ${p}`),
+  ]
+  const recordedRound = await agent(
+    record(
+      roundPathOf(round),
+      `Round ${round} — verdict=${verdict.verdict} style=${styled ? styled.verdict : 'unknown'}`,
+      roundItems,
+    ),
+    {
+      agentType: 'verbatim-writer',
+      model: MODELS.record,
+      label: `record:${round}`,
+      phase: 'Write',
+      schema: WROTE,
+    },
+  )
+  if (recordedRound && recordedRound.written) {
+    log(`[record/${round}] круг записан: ${roundPathOf(round)} пунктов=${roundItems.length}`)
+  } else {
+    // Not fatal, but loud: without the record a restart re-judges this draft from scratch.
+    log(`[record/${round}] КРУГ НЕ ЗАПИСАН — перезапуск будет судить статью заново`)
+  }
+
   // All three conditions. An article the mechanism critic likes but written in machine
   // prose, one in the author's voice that explains the mechanism wrongly, and one both
   // critics like that overruns the brief are equally unfinished.
-  const styleOk = Boolean(styled) && styled.verdict === 'ok'
   if (verdict.verdict === 'ok' && styleOk && sizedReport.ok) break
+}
+
+// The loop may not have run at all — every round spent by earlier launches. The verdict then
+// comes from the record, and if even that is missing there is nothing to report on.
+if (!verdict) {
+  throw new Error('нет ни одного круга правки и нет записей о прошлых — статью никто не судил')
 }
 
 // A silent pass is forbidden. Remarks are recorded whether or not the verdict is `ok`: a critic
