@@ -8,3 +8,6 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+
+# машинное: пути, UUID профиля шлюза — не для публичного репозитория
+.claude/settings.local.json
