@@ -925,7 +925,13 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
     // Carried forward by hand, because the critics of this round judge the NEW draft and will
     // not repeat a remark they consider settled. An item the writer never answered is not
     // settled by anybody.
-    carried = [...unanswered, ...declined].map((it) => `${it.source} (перенесено): ${it.text}`)
+    //
+    // The text travels alone, without a "carried" prefix. It used to get one per round, and by
+    // the sixth an item read `CARRIED (перенесено): CARRIED (перенесено): CARRIED (перенесено):
+    // STYLE (перенесено): …` — four layers of bookkeeping in front of the remark the writer was
+    // supposed to act on. The `[CARRIED]` tag in the numbered list already says where it came
+    // from, and it says it once.
+    carried = [...unanswered, ...declined].map((it) => it.text)
   }
 
   // Measure before judging, so neither critic spends a remark on something already counted.
