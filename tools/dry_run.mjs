@@ -24,9 +24,16 @@ const happy = mode !== 'bad'
 
 const source = readFileSync(target, 'utf8').replace(/^export\s+const\s+meta/m, 'const meta')
 
+// Two shapes, because a script may hand a carrying agent either a bare list of paths or the
+// commands that measure them. The second shape appeared when the inline gate prompt became the
+// gate_runner agent: the paths moved inside `--file <path>`, the bare-list pattern stopped
+// matching, and the retry branch silently went uncovered — the "bad" run lost two agents and
+// still reported success. A harness that stops exercising a branch is worse than no harness.
 function pathsFromPrompt(prompt) {
-  const found = [...prompt.matchAll(/^\s*\d+\.\s+(\S+\.(?:md|txt|png))\s*$/gm)].map((m) => m[1])
-  return found.length ? found : ['dry/run/unknown.md']
+  const listed = [...prompt.matchAll(/^\s*\d+\.\s+(\S+\.(?:md|txt|png))\s*$/gm)].map((m) => m[1])
+  if (listed.length) return listed
+  const inCommands = [...prompt.matchAll(/--file\s+(\S+)/g)].map((m) => m[1])
+  return inCommands.length ? inCommands : ['dry/run/unknown.md']
 }
 
 function fill(schema, prompt) {

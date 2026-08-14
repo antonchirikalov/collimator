@@ -1,0 +1,13 @@
+name: verbatim_writer
+version: 1
+description: >
+  Writes a file that records items exactly as it received them: a heading and the items,
+  one per line, in the language they arrived in. Adds no judgement, rephrases nothing,
+  touches no other file. The pipeline's way of putting an unresolved remark on the record
+  instead of letting it disappear when the rounds run out.
+consumes: []
+produces:
+  - { port: document, type: document@v1 }
+needs: [read, edit]
+defaults:
+  timeout_s: 900

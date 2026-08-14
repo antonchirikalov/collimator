@@ -12,9 +12,10 @@
 // own output and produced neither. Invariant I5 exists for exactly this: I/O instructions are
 // never hand-written.
 //
-// One prompt remains, marked below: the brief node. It turns the caller's free text into a
-// brief@v1 artifact, and no agent in the library does that — in refract it was `builtin/brief`,
-// engine code rather than an agent.
+// No prompt remains. Nine call sites, nine library agents, and what leaves this file is only
+// what the script alone knows: paths, commands, items, round numbers. The brief node was the
+// last holdout — justified as "a builtin, engine code rather than an agent", which was true in
+// refract and stopped being true here, where nothing executes anything.
 //
 // Style is not a prompt here either. The author's voice lives in library/style/author-voice.md
 // and travels as an input port to the writer and to the style critic; the mechanical half of
@@ -71,29 +72,17 @@ const MAX_ASPECTS = 4
 // the article and reports the numbers but passes no verdict on them: inventing a ceiling
 // would hold the text to a figure nobody asked for, and the writer would be revised to it.
 
-// --- The one prompt in this file ----------------------------------------------------------
+// --- No prompts in this file ----------------------------------------------------------------
 //
-// The brief node. Not an agent from the library — a builtin: it turns the caller's free text
-// into the brief@v1 artifact every downstream agent consumes. Its output is also the only
-// place the run's numbers come from, so nothing about length is hardcoded below.
-
-const BRIEF_TASK =
-  `The order for an article, as a person wrote it:
-
-${order}
-
-` +
-  `Turn it into a brief and write that brief to ${BRIEF_PATH}. State: the subject; who the ` +
-  `reader is and what they already know; the language of the article; the length in ` +
-  `characters of readable text; what must be covered; what must stay out. Invent nothing ` +
-  `the order does not contain — leave a field out rather than fill it with a guess.
-
-` +
-  `Return separately: the language; the length bounds in characters, but ONLY if the order ` +
-  `states them — if it says nothing about length, omit both fields rather than pick a ` +
-  `number; and between two and ${MAX_ASPECTS} aspects of the subject worth researching IN ` +
-  `PARALLEL, meaning genuinely different questions rather than one question reworded. Each ` +
-  `aspect carries a short latin slug for a filename and one sentence saying what to look for.`
+// There are none left. Every agent this script calls is a library agent that already knows its
+// job, and what travels from here is only what the script alone can know: which paths, which
+// commands, which items, which round. The last three inline prompts became brief_writer,
+// gate_runner and verbatim_writer — the brief node in particular used to be justified as "a
+// builtin, engine code rather than an agent", which was true in refract and stopped being a
+// reason once nothing here executes anything.
+//
+// The test is simple: a string in this file that would still make sense if the pipeline were
+// about invoices instead of articles is orchestration. Anything else belongs in a prompt.md.
 
 // --- The I/O tail, generated the same way for every agent -----------------------------------
 //
@@ -116,9 +105,9 @@ const NO_FILE_RULE =
   `schema ARE your result — everything you found has to fit in them.`
 
 function task({ inputs, output, extra, noFile }) {
-  const ports = inputs.map((i) => `${i.port}: ${i.path}`).join('\n')
+  const ports = (inputs || []).map((i) => `${i.port}: ${i.path}`).join('\n')
   return (
-    `INPUT\n${ports}\n\n` +
+    (ports ? `INPUT\n${ports}\n\n` : '') +
     (noFile ? NO_FILE_RULE : `OUTPUT\n${output}\n\n` + OUTPUT_RULE) +
     (extra ? `\n\n${extra}` : '')
   )
@@ -335,22 +324,26 @@ function gateCommand(path, min, max) {
   return `python -X utf8 tools/gate.py --file ${path} ${bounds.join(' ')}`.trim()
 }
 
-function carry(command) {
-  return (
-    `Run exactly this command from the repository root and return its result unchanged — ` +
-    `add nothing, correct nothing, repackage nothing:\n\n${command}\n\n` +
-    `Return the parsed report in the report field and the raw output in stdout. If the ` +
-    `command did not run, say so in stdout and do not invent a report.`
-  )
+// What gate_runner receives is a list of commands and nothing else. How to run them, what not
+// to do to the output, and what to do when a command does not run at all are in its prompt.md,
+// where they are written once for every pipeline instead of once per script.
+function commands(list) {
+  return `COMMANDS\n` + list.map((c, i) => `${i + 1}. ${c}`).join('\n')
 }
 
-function existenceCommand(paths) {
+// A file that exists but holds 200 characters is a file an agent created and abandoned, which
+// is why existence is measured rather than tested: `--min-length` turns "is it there" and "is
+// there anything in it" into one number the script can branch on.
+function existenceCommands(paths) {
+  return commands(paths.map((p) => `python -X utf8 tools/gate.py --file ${p} --min-length 200`))
+}
+
+// Same for verbatim_writer: a destination, a heading, and the items. Everything about not
+// rephrasing them and not touching the article lives in its prompt.
+function record(path, heading, items) {
   return (
-    `For EACH path in the list, run exactly this command from the repository root with the ` +
-    `path substituted, and return one element per path:\n\n` +
-    `python -X utf8 tools/gate.py --file <path> --min-length 200\n\n` +
-    paths.map((p, i) => `${i + 1}. ${p}`).join('\n') +
-    `\n\nCreate nothing and fix nothing — only measure.`
+    `FILE\n${path}\n\nHEADING\n${heading}\n\nITEMS\n` +
+    items.map((r, i) => `${i + 1}. ${r}`).join('\n')
   )
 }
 
@@ -361,12 +354,23 @@ log(`[start] order: ${order.replace(/\s+/g, ' ').slice(0, 200)}`)
 
 phase('Brief')
 const brief = must(
-  await agent(BRIEF_TASK, {
-    model: 'haiku',
-    label: 'brief',
-    phase: 'Brief',
-    schema: BRIEF_OUT,
-  }),
+  await agent(
+    task({
+      output: BRIEF_PATH,
+      extra: `THE ORDER, as the person wrote it:\n\n${order}`,
+    }),
+    {
+      agentType: 'brief-writer',
+      // Opus for the cheapest-looking stage in the run. What it decides is the research
+      // agenda: aspects that pull apart send four finders at four different bodies of
+      // material, aspects that are one question reworded send them all at the same page and
+      // no later stage recovers from that.
+      model: 'opus',
+      label: 'brief',
+      phase: 'Brief',
+      schema: BRIEF_OUT,
+    },
+  ),
   'brief — without aspects and a language there is nowhere to go',
 )
 const minProse = brief.min_prose
@@ -435,7 +439,7 @@ const analyseTask = task({
 phase('Analyse')
 let analysis = await agent(analyseTask, {
   agentType: 'domain-analyst',
-  model: 'sonnet',
+  model: 'opus',
   label: 'analyse',
   phase: 'Analyse',
   schema: ANALYSIS,
@@ -458,7 +462,8 @@ if (analysis) {
 
 phase('Verify')
 let existence = must(
-  await agent(existenceCommand([...found.map((f) => f.path), MATERIAL_PATH]), {
+  await agent(existenceCommands([...found.map((f) => f.path), MATERIAL_PATH]), {
+    agentType: 'gate-runner',
     model: 'haiku',
     label: 'verify:1',
     phase: 'Verify',
@@ -478,13 +483,14 @@ if (materialCheck && !materialCheck.ok) {
       analyseTask,
     {
       agentType: 'domain-analyst',
-      model: 'sonnet',
+      model: 'opus',
       label: 'analyse:2',
       phase: 'Verify',
       schema: ANALYSIS,
     },
   )
-  existence = await agent(existenceCommand([MATERIAL_PATH]), {
+  existence = await agent(existenceCommands([MATERIAL_PATH]), {
+    agentType: 'gate-runner',
     model: 'haiku',
     label: 'verify:2',
     phase: 'Verify',
@@ -546,7 +552,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   const article = must(
     await agent(task({ inputs: writeInputs, output: ARTICLE_PATH, extra: revision }), {
       agentType: 'article-writer',
-      model: 'sonnet',
+      model: 'opus',
       label: `write:${round}`,
       phase: 'Write',
       schema: ARTICLE,
@@ -557,7 +563,8 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   for (const c of article.changes) log(`[write/${round}/change] ${c}`)
 
   // Measure before judging, so neither critic spends a remark on something already counted.
-  const sized = await agent(carry(gateCommand(ARTICLE_PATH, minProse, maxProse)), {
+  const sized = await agent(commands([gateCommand(ARTICLE_PATH, minProse, maxProse)]), {
+    agentType: 'gate-runner',
     model: 'haiku',
     label: `gate:${round}`,
     phase: 'Write',
@@ -599,7 +606,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
         }),
         {
           agentType: 'article-critic',
-          model: 'sonnet',
+          model: 'opus',
           label: `critic:${round}`,
           phase: 'Write',
           schema: VERDICT,
@@ -624,7 +631,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
         }),
         {
           agentType: 'style-critic-ru',
-          model: 'sonnet',
+          model: 'opus',
           label: `style:${round}`,
           phase: 'Write',
           schema: STYLE_VERDICT,
@@ -683,14 +690,14 @@ if (openItems.length) {
       `${passed ? 'accepted with remarks' : 'NOT accepted'}: items=${openItems.length}`,
   )
   const wrote = await agent(
-    (passed
-      ? 'The article was accepted, but these remarks were left unactioned. '
-      : 'The revision rounds ran out and these remarks were left open. ') +
-      `Write the file ${UNRESOLVED_PATH} and do nothing else: do not touch the article and ` +
-      `do not add judgements of your own. The file holds a heading and the items verbatim, ` +
-      `one per line, in the language they are written in:\n\n` +
-      openItems.map((r, i) => `${i + 1}. ${r}`).join('\n'),
-    { model: 'haiku', label: 'unresolved', phase: 'Write', schema: WROTE },
+    record(
+      UNRESOLVED_PATH,
+      passed
+        ? 'The article was accepted, but these remarks were left unactioned'
+        : 'The revision rounds ran out and these remarks were left open',
+      openItems,
+    ),
+    { agentType: 'verbatim-writer', model: 'haiku', label: 'unresolved', phase: 'Write', schema: WROTE },
   )
   unresolvedPath = wrote && wrote.written ? UNRESOLVED_PATH : null
   if (unresolvedPath) {
@@ -704,7 +711,8 @@ if (openItems.length) {
 // --- Gate: the acceptance record ---------------------------------------------------------
 
 phase('Gate')
-const gate = await agent(carry(gateCommand(ARTICLE_PATH, minProse, maxProse)), {
+const gate = await agent(commands([gateCommand(ARTICLE_PATH, minProse, maxProse)]), {
+  agentType: 'gate-runner',
   model: 'haiku',
   label: 'gate:final',
   phase: 'Gate',

@@ -1,0 +1,16 @@
+name: gate_runner
+version: 1
+description: >
+  Carries a deterministic check and brings its output back unchanged. Runs the exact
+  commands it is given from the repository root and returns their parsed reports and their
+  raw output. Measures nothing itself, judges nothing, creates nothing and fixes nothing —
+  a workflow script has no shell, and this agent is the shell it borrows.
+consumes: []
+produces:
+  - { port: report, type: gate_report@v1 }
+# `bash` and nothing else. The value of this agent is that it cannot do anything except run
+# the command it was handed: an agent that could also edit the file would be one bad
+# inference away from making the measurement true instead of reporting it.
+needs: [bash]
+defaults:
+  timeout_s: 900
