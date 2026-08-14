@@ -1,7 +1,7 @@
 ---
 name: article-critic
 description: 'Reviews an explanatory article against the assignment and the analysis it was built from, and emits a verdict@v1. Judges the MECHANISM, not the prose: whether the explanation is correct, whether the worked example demonstrates what the text claims, whether a reader who did not know the subject could now follow it. Style is a separate stage with a separate critic.'
-tools: Read, Write, Edit
+tools: Read
 ---
 
 <!-- Сгенерировано collimate build из library/agents/article_critic/. Правки вносятся в источник, не сюда. -->

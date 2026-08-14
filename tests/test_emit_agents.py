@@ -258,10 +258,27 @@ def test_mcp_servers_frontmatter_matches_tools(tmp_path: Path) -> None:
 
 def test_agents_without_mcp_declare_no_servers(tmp_path: Path) -> None:
     emit_all(LIBRARY_AGENTS, tmp_path)
-    plain = tmp_path / "article-critic.md"
+    plain = tmp_path / "article-writer.md"
     head = frontmatter_of(plain.read_text(encoding="utf-8"))
     assert "mcpServers" not in head
     assert head["tools"] == "Read, Write, Edit"
+
+
+@pytest.mark.parametrize("critic", ["article-critic", "style-critic-ru"])
+def test_critics_cannot_write(tmp_path: Path, critic: str) -> None:
+    """Критик выносит вердикт, а не правит текст.
+
+    Запрет держится списком инструментов, а не формулировкой в промпте: скрипт и так
+    говорит «файла не пишешь», но правило, которое нельзя нарушить физически, не забывается
+    в конце длинного круга. Критик с `Edit` — один неудачный вывод от того, чтобы «починить»
+    статью, которую его позвали судить.
+    """
+    emit_all(LIBRARY_AGENTS, tmp_path)
+    head = frontmatter_of((tmp_path / f"{critic}.md").read_text(encoding="utf-8"))
+    tools = [t.strip() for t in head["tools"].split(",")]
+    assert "Write" not in tools
+    assert "Edit" not in tools
+    assert "Read" in tools
 
 
 def test_emit_all_is_deterministic(tmp_path: Path) -> None:

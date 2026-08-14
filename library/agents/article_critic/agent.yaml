@@ -13,6 +13,10 @@ consumes:
   - { port: notes, type: collection<study_note@v1> }
 produces:
   - { port: verdict, type: verdict@v1 }
-needs: [read, edit]
+# `read` only. This agent produces a verdict, never a file, and the script tells it so in
+# words — but a rule enforced by the tool list cannot be forgotten under pressure at the end
+# of a long round. A critic holding Edit is one bad inference away from "fixing" the article
+# it was asked to judge, and the whole point of the loop is that the writer writes.
+needs: [read]
 defaults:
   timeout_s: 3600
