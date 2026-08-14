@@ -431,12 +431,52 @@ log(
 )
 for (const a of brief.aspects) log(`[brief/aspect] ${a.slug}: ${a.question}`)
 
+// --- Resume: the artifacts on disk are the checkpoint -----------------------------------------
+//
+// A dynamic workflow lives inside the CLI process. When that process goes — a restart, a
+// session moved to a background job — the run goes with it, and `resumeFromRunId` does not
+// help because its cache is same-session only. A live run lost forty minutes exactly that way:
+// the second attempt started from the brief, the brief invented new aspect slugs, and eleven
+// source files already on disk became orphans nobody would ever read.
+//
+// So the checkpoint is not the cache, it is the disk. Before spending anything, ask what is
+// already there and skip those stages loudly. Two things make this safe: brief_writer keeps an
+// existing brief instead of re-inventing its slugs, so the filenames below stay the same
+// across attempts; and every skip is logged by name, because a stage silently not running is
+// indistinguishable from a stage that ran badly.
+//
+// `config.fresh` forces the whole thing to be rebuilt — for when the order changed and the
+// artifacts on disk were written for a different one.
+const sourcePaths = brief.aspects.map((a) => sourcePathOf(a.slug))
+let present = new Set()
+if (cfg.fresh) {
+  log('[resume] config.fresh — всё пересобирается с нуля, ничего не переиспользуется')
+} else {
+  phase('Resume')
+  const onDisk = await agent(existenceCommands([...sourcePaths, MATERIAL_PATH, ARTICLE_PATH]), {
+    agentType: 'gate-runner',
+    model: MODELS.gate,
+    label: 'resume',
+    phase: 'Resume',
+    schema: EXISTENCE,
+  })
+  for (const c of (onDisk && onDisk.checks) || []) {
+    if (c.ok) present.add(c.path)
+  }
+  log(
+    `[resume] найдено готового: источников ${sourcePaths.filter((p) => present.has(p)).length}` +
+      `/${sourcePaths.length}, материал=${present.has(MATERIAL_PATH)} ` +
+      `черновик=${present.has(ARTICLE_PATH)}`,
+  )
+}
+
 // --- Research: the fan-out lives in the script; an agent never produces a collection ---------
 
 phase('Research')
 const findings = await parallel(
-  brief.aspects.map((aspect) => () =>
-    agent(
+  brief.aspects.map((aspect) => () => {
+    if (present.has(sourcePathOf(aspect.slug))) return Promise.resolve('reused')
+    return agent(
       task({
         inputs: [{ port: 'brief', path: BRIEF_PATH }],
         output: sourcePathOf(aspect.slug),
@@ -449,8 +489,8 @@ const findings = await parallel(
         phase: 'Research',
         schema: FOUND,
       },
-    ),
-  ),
+    )
+  }),
 )
 
 // parallel() keeps order and yields null where a call failed, so the index still names the
@@ -460,11 +500,21 @@ const found = []
 for (let i = 0; i < brief.aspects.length; i++) {
   const result = findings[i]
   const aspect = brief.aspects[i]
+  const path = sourcePathOf(aspect.slug)
   if (!result) {
     log(`[research/${aspect.slug}] the agent returned nothing`)
     continue
   }
-  found.push({ aspect, path: sourcePathOf(aspect.slug), sources: result.sources })
+  // A reused file has no list of titles to report: that list lived in the return value of an
+  // agent from a run that no longer exists. The file is what the analyst reads, so the aspect
+  // counts as covered — and the log says the count came from disk rather than from a search,
+  // because "sources=0" next to a covered aspect is otherwise a mystery.
+  if (result === 'reused') {
+    found.push({ aspect, path, sources: [], reused: true })
+    log(`[research/${aspect.slug}] переиспользован с диска, поиск не запускался`)
+    continue
+  }
+  found.push({ aspect, path, sources: result.sources, reused: false })
   log(
     `[research/${aspect.slug}] sources=${result.sources.length} ` +
       `tool=${result.tool_used}`,
@@ -475,7 +525,11 @@ if (found.length === 0) throw new Error('not one source finder returned anything
 
 const sourcePorts = found.map((f) => ({ port: `sources:${f.aspect.slug}`, path: f.path }))
 const totalSources = found.reduce((sum, f) => sum + f.sources.length, 0)
-log(`[research] aspects_covered=${found.length}/${brief.aspects.length} sources=${totalSources}`)
+const reusedCount = found.filter((f) => f.reused).length
+log(
+  `[research] aspects_covered=${found.length}/${brief.aspects.length} sources=${totalSources}` +
+    (reusedCount ? ` (переиспользовано с диска: ${reusedCount})` : ''),
+)
 
 // --- Analyse: between reading and writing, or the writer paraphrases its last source ---------
 
@@ -485,13 +539,18 @@ const analyseTask = task({
 })
 
 phase('Analyse')
-let analysis = await agent(analyseTask, {
-  agentType: 'domain-analyst',
-  model: MODELS.analyse,
-  label: 'analyse',
-  phase: 'Analyse',
-  schema: ANALYSIS,
-})
+let analysis = null
+if (present.has(MATERIAL_PATH)) {
+  log('[analyse] материал уже на диске, аналитик не запускается')
+} else {
+  analysis = await agent(analyseTask, {
+    agentType: 'domain-analyst',
+    model: MODELS.analyse,
+    label: 'analyse',
+    phase: 'Analyse',
+    schema: ANALYSIS,
+  })
+}
 // The analysis object is read here for the log only — the artifact the writer consumes is
 // the file. A dead analyst therefore does not stop the run, but it must be visible: the
 // verification stage below is what decides whether the material actually exists.
@@ -502,7 +561,7 @@ if (analysis) {
   )
   for (const d of analysis.disagreements) log(`[analyse/disagreement] ${d}`)
   for (const g of analysis.gaps) log(`[analyse/gap] ${g}`)
-} else {
+} else if (!present.has(MATERIAL_PATH)) {
   log('[analyse] THE ANALYST RETURNED NOTHING — the disk check decides whether material exists')
 }
 
@@ -597,18 +656,27 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
             styleRemarks.map((r, i) => `${i + 1}. ${r}`).join('\n')
           : '')
 
-  const article = must(
-    await agent(task({ inputs: writeInputs, output: ARTICLE_PATH, extra: revision }), {
-      agentType: 'article-writer',
-      model: MODELS.write,
-      label: `write:${round}`,
-      phase: 'Write',
-      schema: ARTICLE,
-    }),
-    `write:${round} — without a draft the round is empty`,
-  )
-  log(`[write/${round}] changes=${article.changes.length}`)
-  for (const c of article.changes) log(`[write/${round}/change] ${c}`)
+  // A draft already on disk is a draft nobody has judged yet, and rewriting it from scratch
+  // throws away the most expensive agent in the run. So the first round skips the writer and
+  // goes straight to the gate and the critics; from the second round on the writer always
+  // runs, because by then there are remarks to act on.
+  const skipWriter = round === 1 && present.has(ARTICLE_PATH)
+  if (skipWriter) {
+    log('[write/1] черновик уже на диске, писатель не запускается — сразу гейт и критики')
+  } else {
+    const article = must(
+      await agent(task({ inputs: writeInputs, output: ARTICLE_PATH, extra: revision }), {
+        agentType: 'article-writer',
+        model: MODELS.write,
+        label: `write:${round}`,
+        phase: 'Write',
+        schema: ARTICLE,
+      }),
+      `write:${round} — without a draft the round is empty`,
+    )
+    log(`[write/${round}] changes=${article.changes.length}`)
+    for (const c of article.changes) log(`[write/${round}/change] ${c}`)
+  }
 
   // Measure before judging, so neither critic spends a remark on something already counted.
   const sized = await agent(commands([gateCommand(ARTICLE_PATH, minProse, maxProse)]), {
