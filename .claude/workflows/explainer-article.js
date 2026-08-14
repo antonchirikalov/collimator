@@ -55,14 +55,9 @@ const sourcePathOf = (slug) => `${run}/sources/${slug}.md`
 
 const MAX_ROUNDS = 2
 const MAX_ASPECTS = 4
-// Used when the order says nothing about length. The gate needs both ends: a floor alone lets
-// an article run over and reduces the critic to arguing about size by eye, which it does badly
-// — measured at 10 500-11 500 against an actual 10 033.
-const DEFAULT_MIN_PROSE = 6000
-const DEFAULT_MAX_PROSE = 9000
-// The file carries markdown, tables and captions on top of the prose; the ceiling on the file
-// is deliberately looser than the ceiling on readable text.
-const LENGTH_SLACK = 5000
+// Length is not defaulted. When the order says nothing about size, the gate still measures
+// the article and reports the numbers but passes no verdict on them: inventing a ceiling
+// would hold the text to a figure nobody asked for, and the writer would be revised to it.
 
 // --- The one prompt in this file ----------------------------------------------------------
 //
@@ -71,16 +66,22 @@ const LENGTH_SLACK = 5000
 // place the run's numbers come from, so nothing about length is hardcoded below.
 
 const BRIEF_TASK =
-  `Заказ на статью, как его сформулировал человек:\n\n${order}\n\n` +
-  `Разложи его в бриф и запиши файлом ${BRIEF_PATH}. В файле: тема; кто читатель и что он ` +
-  `уже знает; на каком языке статья; объём в знаках читаемого текста; что обязано быть ` +
-  `раскрыто; чего в статье быть не должно. Ничего не выдумывай сверх заказа — то, чего в ` +
-  `нём нет, оставь незаполненным.\n\n` +
-  `Отдельно верни: язык статьи; нижнюю и верхнюю границу объёма в знаках (если заказ их не ` +
-  `называет — ${DEFAULT_MIN_PROSE} и ${DEFAULT_MAX_PROSE}); и от двух до ${MAX_ASPECTS} ` +
-  `аспектов темы, по которым имеет смысл искать источники ПАРАЛЛЕЛЬНО — это разные вопросы, ` +
-  `а не один вопрос разными словами. У каждого аспекта: короткий слаг латиницей для имени ` +
-  `файла и одно предложение, что именно искать.`
+  `The order for an article, as a person wrote it:
+
+${order}
+
+` +
+  `Turn it into a brief and write that brief to ${BRIEF_PATH}. State: the subject; who the ` +
+  `reader is and what they already know; the language of the article; the length in ` +
+  `characters of readable text; what must be covered; what must stay out. Invent nothing ` +
+  `the order does not contain — leave a field out rather than fill it with a guess.
+
+` +
+  `Return separately: the language; the length bounds in characters, but ONLY if the order ` +
+  `states them — if it says nothing about length, omit both fields rather than pick a ` +
+  `number; and between two and ${MAX_ASPECTS} aspects of the subject worth researching IN ` +
+  `PARALLEL, meaning genuinely different questions rather than one question reworded. Each ` +
+  `aspect carries a short latin slug for a filename and one sentence saying what to look for.`
 
 // --- The I/O tail, generated the same way for every agent -----------------------------------
 //
@@ -90,15 +91,15 @@ const BRIEF_TASK =
 // nine hand-written variants that drift apart.
 
 const OUTPUT_RULE =
-  `Файл — это и есть твой результат. Запиши его инструментом Write, прежде чем завершиться; ` +
-  `поля, которые ты возвращаешь схемой, — сведения о нём, они его не заменяют и никуда не ` +
-  `сохраняются. Если файл уже есть и его надо изменить — правь его, а не создавай заново.`
+  `The file is your result. Write it with the Write tool before you finish; the fields you ` +
+  `return through the schema describe it, they do not replace it and are saved nowhere. If ` +
+  `the file already exists and needs changing, edit it rather than write it again.`
 
 function task({ inputs, output, extra }) {
   const ports = inputs.map((i) => `${i.port}: ${i.path}`).join('\n')
   return (
-    `ВХОД\n${ports}\n\n` +
-    `ВЫХОД\n${output}\n\n` +
+    `INPUT\n${ports}\n\n` +
+    `OUTPUT\n${output}\n\n` +
     OUTPUT_RULE +
     (extra ? `\n\n${extra}` : '')
   )
@@ -108,11 +109,13 @@ function task({ inputs, output, extra }) {
 
 const BRIEF_OUT = {
   type: 'object',
-  required: ['language', 'min_prose', 'max_prose', 'aspects'],
+  // Only what the order cannot fail to imply. The bounds are absent when the order says
+  // nothing about length, and absent is a meaningful answer here, not a missing one.
+  required: ['language', 'aspects'],
   properties: {
-    language: { type: 'string', description: 'язык статьи, одним словом' },
-    min_prose: { type: 'number' },
-    max_prose: { type: 'number' },
+    language: { type: 'string', description: 'language of the article, one word' },
+    min_prose: { type: 'number', description: 'lower bound in characters, only if the order gives one' },
+    max_prose: { type: 'number', description: 'upper bound in characters, only if the order gives one' },
     aspects: {
       type: 'array',
       minItems: 2,
@@ -121,8 +124,8 @@ const BRIEF_OUT = {
         type: 'object',
         required: ['slug', 'question'],
         properties: {
-          slug: { type: 'string', description: 'латиницей через дефис, для имени файла' },
-          question: { type: 'string', description: 'что именно искать по этому аспекту' },
+          slug: { type: 'string', description: 'latin, hyphenated, used as a filename' },
+          question: { type: 'string', description: 'what to look for under this aspect' },
         },
       },
     },
@@ -230,29 +233,31 @@ const EXISTENCE = {
 // command and bring the JSON back. Python does the counting because a model cannot: asked to
 // judge length by eye, two critics said 10 500-11 500 where the answer was 10 033.
 
+// The bounds are optional on purpose: a run whose order said nothing about length gets a
+// measurement and no verdict. gate.py with no rule still reports chars and prose_chars.
 function gateCommand(path, min, max) {
-  return (
-    `python -X utf8 tools/gate.py --file ${path} ` +
-    `--min-prose ${min} --max-prose ${max} --max-length ${max + LENGTH_SLACK}`
-  )
+  const bounds = []
+  if (min) bounds.push(`--min-prose ${min}`)
+  if (max) bounds.push(`--max-prose ${max}`)
+  return `python -X utf8 tools/gate.py --file ${path} ${bounds.join(' ')}`.trim()
 }
 
 function carry(command) {
   return (
-    `Выполни ровно эту команду из корня репозитория и верни её результат без изменений — ` +
-    `ничего не добавляя, не исправляя и не переупаковывая:\n\n${command}\n\n` +
-    `Верни разобранный отчёт полем report и сырой вывод полем stdout. Если команда не ` +
-    `запустилась, скажи это в stdout, а report не выдумывай.`
+    `Run exactly this command from the repository root and return its result unchanged — ` +
+    `add nothing, correct nothing, repackage nothing:\n\n${command}\n\n` +
+    `Return the parsed report in the report field and the raw output in stdout. If the ` +
+    `command did not run, say so in stdout and do not invent a report.`
   )
 }
 
 function existenceCommand(paths) {
   return (
-    `Для КАЖДОГО пути из списка выполни из корня репозитория ровно эту команду, подставив ` +
-    `путь, и верни по одному элементу на путь:\n\n` +
-    `python -X utf8 tools/gate.py --file <путь> --min-length 200\n\n` +
+    `For EACH path in the list, run exactly this command from the repository root with the ` +
+    `path substituted, and return one element per path:\n\n` +
+    `python -X utf8 tools/gate.py --file <path> --min-length 200\n\n` +
     paths.map((p, i) => `${i + 1}. ${p}`).join('\n') +
-    `\n\nНичего не создавай и не исправляй, только измеряй.`
+    `\n\nCreate nothing and fix nothing — only measure.`
   )
 }
 
@@ -270,8 +275,10 @@ const brief = await agent(BRIEF_TASK, {
 })
 const minProse = brief.min_prose
 const maxProse = brief.max_prose
+const hasBounds = Boolean(minProse || maxProse)
 log(
-  `[brief] файл=${BRIEF_PATH} язык=${brief.language} объём=${minProse}–${maxProse} ` +
+  `[brief] файл=${BRIEF_PATH} язык=${brief.language} ` +
+    `объём=${hasBounds ? `${minProse || '?'}–${maxProse || '?'}` : 'заказом не задан, гейт его не проверяет'} ` +
     `аспектов=${brief.aspects.length}`,
 )
 for (const a of brief.aspects) log(`[brief/аспект] ${a.slug}: ${a.question}`)
@@ -285,7 +292,7 @@ const findings = await parallel(
       task({
         inputs: [{ port: 'brief', path: BRIEF_PATH }],
         output: sourcePathOf(aspect.slug),
-        extra: `Твой аспект: ${aspect.question}`,
+        extra: `Your aspect: ${aspect.question}`,
       }),
       {
         agentType: 'source-finder',
@@ -445,12 +452,14 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
         { port: 'material', path: MATERIAL_PATH },
         ...sourcePorts,
       ],
-      output: '(файла не пишешь — верни вердикт схемой)',
+      output: '(no file — return the verdict through the schema)',
       extra:
-        `Объём уже измерен арифметически: ` +
-        `${sizeProblems.length ? sizeProblems.join('; ') : 'в границах брифа'}. ` +
-        `Про длину замечаний не пиши.` +
-        (round < MAX_ROUNDS ? '' : ' Круг правки последний, дальше кругов нет.'),
+        (hasBounds
+          ? `Length has already been measured arithmetically: ` +
+            `${sizeProblems.length ? sizeProblems.join('; ') : 'within the brief'}. ` +
+            `Do not spend a remark on length.`
+          : `The order set no length, so length is not a defect here.`) +
+        (round < MAX_ROUNDS ? '' : ' This is the last revision round; there are no more.'),
     }),
     {
       agentType: 'article-critic',
@@ -480,10 +489,11 @@ if (openItems.length) {
   )
   const wrote = await agent(
     (passed
-      ? 'Статья принята, но замечания остались неисполненными. '
-      : 'Круги правки исчерпаны, часть замечаний осталась незакрытой. ') +
-      `Запиши файл ${UNRESOLVED_PATH} и больше ничего не делай: статью не правь, оценок не ` +
-      `добавляй. В файле — заголовок и список дословно, по одному на пункт:\n\n` +
+      ? 'The article was accepted, but these remarks were left unactioned. '
+      : 'The revision rounds ran out and these remarks were left open. ') +
+      `Write the file ${UNRESOLVED_PATH} and do nothing else: do not touch the article and ` +
+      `do not add judgements of your own. The file holds a heading and the items verbatim, ` +
+      `one per line, in the language they are written in:\n\n` +
       openItems.map((r, i) => `${i + 1}. ${r}`).join('\n'),
     { model: 'haiku', label: 'unresolved', phase: 'Write', schema: WROTE },
   )
