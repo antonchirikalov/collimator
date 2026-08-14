@@ -6,11 +6,17 @@
 
 export const meta = {
   name: 'which-file-all',
-  description: 'Отпечаток каждого агента конвейера: его промпт — наш сгенерированный файл?',
-  phases: [{ title: 'Fingerprint', detail: 'по одному дешёвому агенту на определение' }],
+  description: 'Fingerprint every agent of the pipeline: is its prompt our generated file?',
+  phases: [{ title: 'Fingerprint', detail: 'one cheap agent per definition' }],
 }
 
-const AGENTS = ['source-finder', 'domain-analyst', 'article-writer', 'article-critic']
+const AGENTS = [
+  'source-finder',
+  'domain-analyst',
+  'article-writer',
+  'article-critic',
+  'style-critic-ru',
+]
 
 const PROOF = {
   type: 'object',
@@ -18,10 +24,10 @@ const PROOF = {
   properties: {
     html_comment: {
       type: 'string',
-      description: 'HTML-комментарий из твоих инструкций дословно; пустая строка, если его нет',
+      description: 'the HTML comment from your instructions, verbatim; empty string if none',
     },
-    first_line: { type: 'string', description: 'первая строка инструкций после комментария' },
-    tools: { type: 'array', items: { type: 'string' }, description: 'доступные тебе инструменты' },
+    first_line: { type: 'string', description: 'the first line of instructions after it' },
+    tools: { type: 'array', items: { type: 'string' }, description: 'the tools available to you' },
   },
 }
 
@@ -29,10 +35,10 @@ phase('Fingerprint')
 const proofs = await parallel(
   AGENTS.map((name) => () =>
     agent(
-      'Диагностика, не работа. Ничего не читай на диске и ничего не пиши — отвечай только про ' +
-        'СВОИ инструкции, тот текст, который выдан тебе как системный промпт.\n\n' +
-        'Приведи дословно HTML-комментарий вида <!-- ... -->, если он там есть; первую строку ' +
-        'инструкций после него; и список доступных тебе инструментов.',
+      'Diagnostics, not work. Read nothing from disk and write nothing — answer only about ' +
+        'YOUR OWN instructions, the text handed to you as your system prompt.\n\n' +
+        'Quote verbatim the HTML comment of the form <!-- ... --> if there is one; the first ' +
+        'line of instructions after it; and the list of tools available to you.',
       { agentType: name, model: 'haiku', label: `fp:${name}`, phase: 'Fingerprint', schema: PROOF },
     ),
   ),
@@ -43,14 +49,14 @@ for (let i = 0; i < AGENTS.length; i++) {
   const name = AGENTS[i]
   const p = proofs[i]
   if (!p) {
-    log(`[fp/${name}] агент не ответил`)
+    log(`[fp/${name}] the agent did not answer`)
     continue
   }
   const expected = `library/agents/${name.replace(/-/g, '_')}/`
   const match = p.html_comment.includes(expected)
-  log(`[fp/${name}] маркер_наш=${match} инструменты=${p.tools.join(', ')}`)
-  log(`[fp/${name}] комментарий=«${p.html_comment}»`)
-  log(`[fp/${name}] первая_строка=«${p.first_line.slice(0, 120)}»`)
+  log(`[fp/${name}] marker_is_ours=${match} tools=${p.tools.join(', ')}`)
+  log(`[fp/${name}] comment=«${p.html_comment}»`)
+  log(`[fp/${name}] first_line=«${p.first_line.slice(0, 120)}»`)
   report.push({ name, match, comment: p.html_comment, tools: p.tools })
 }
 

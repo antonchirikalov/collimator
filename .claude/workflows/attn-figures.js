@@ -18,22 +18,26 @@
 // token in the Windows keychain (fix: open "SS AI Setup", press Apply) — it is not a reason to
 // reach for a public image key, and silently switching providers is how a run stops testing
 // what it was built to test.
+//
+// Every string in this file is English, including the ones only a person reads. The articles
+// are Russian; the machinery that makes them is not, and a script that mixes the two gives a
+// model one more reason to switch language halfway through a run.
 
 export const meta = {
   name: 'attn-figures',
-  description: 'Иллюстрации к готовой статье через figgybanana, критик — Kimi K3',
+  description: 'Figures for a finished article through figgybanana, with Kimi K3 as the critic',
   phases: [
-    { title: 'Plan', detail: 'какие рисунки статье нужны, заглушки в текст' },
-    { title: 'Draw', detail: 'figgybanana по одному разу на рисунок' },
-    { title: 'Look', detail: 'смотрим на PNG глазами и сверяем с подписью' },
-    { title: 'Redraw', detail: 'перерисовка того, что не прошло, с замечаниями' },
-    { title: 'Gate', detail: 'детерминированный счёт файлов' },
+    { title: 'Plan', detail: 'which figures the article needs, placeholders into the text' },
+    { title: 'Draw', detail: 'figgybanana, one run per figure' },
+    { title: 'Look', detail: 'read the PNGs with our own eyes against the captions' },
+    { title: 'Redraw', detail: 'redraw what failed, with the defects attached' },
+    { title: 'Gate', detail: 'deterministic file count' },
   ],
 }
 
 const run = typeof args === 'string' ? args : args && args.runDir
 if (!run) {
-  throw new Error('нужен каталог прогона: args.runDir, например probe-runs/figures')
+  throw new Error('a run directory is required: args.runDir, e.g. probe-runs/figures')
 }
 // The article to illustrate comes from a previous run; nothing here writes to it.
 const source = (args && args.articlePath) || 'probe-runs/attn3/article.md'
@@ -77,10 +81,10 @@ const PLAN = {
         type: 'object',
         required: ['slug', 'caption', 'why', 'section'],
         properties: {
-          slug: { type: 'string', description: 'латиницей через дефис, имя файла без .png' },
-          caption: { type: 'string', description: 'подпись из заглушки, дословно' },
-          why: { type: 'string', description: 'что рисунок объясняет лучше, чем абзац текста' },
-          section: { type: 'string', description: 'заголовок раздела, после которого он стоит' },
+          slug: { type: 'string', description: 'latin, hyphenated, the filename without .png' },
+          caption: { type: 'string', description: 'the caption from the placeholder, verbatim' },
+          why: { type: 'string', description: 'what the figure explains better than a paragraph' },
+          section: { type: 'string', description: 'the heading of the section it stands after' },
         },
       },
     },
@@ -98,8 +102,8 @@ const DRAWN = {
         required: ['slug', 'critic_provider', 'run_dir', 'iterations'],
         properties: {
           slug: { type: 'string' },
-          critic_provider: { type: 'string', description: 'kimi или claude_code — кто судил' },
-          run_dir: { type: 'string', description: 'каталог прогона CLI, он его сам назвал' },
+          critic_provider: { type: 'string', description: 'kimi or claude_code — who judged it' },
+          run_dir: { type: 'string', description: 'the CLI run directory, which the CLI named' },
           iterations: { type: 'number' },
         },
       },
@@ -114,7 +118,7 @@ const DRAWN = {
     },
     gateway_ok: {
       type: 'boolean',
-      description: 'ответил ли шлюз изображений; false при 401 или отсутствии токена',
+      description: 'did the image gateway answer; false on a 401 or a missing token',
     },
   },
 }
@@ -137,13 +141,13 @@ const LOOKED = {
           labels_seen: {
             type: 'array',
             items: { type: 'string' },
-            description: 'КАЖДАЯ надпись на картинке дословно, включая мелкие и подрисуночные',
+            description: 'EVERY label on the image verbatim, including small and sub-figure ones',
           },
-          ok: { type: 'boolean', description: 'годится ли рисунок в статью как есть' },
+          ok: { type: 'boolean', description: 'is the figure fit for the article as it stands' },
           defects: {
             type: 'array',
             items: { type: 'string' },
-            description: 'что именно не так, каждое пригодно как правка для рисовальщика',
+            description: 'what exactly is wrong; each one usable as an instruction to redraw',
           },
         },
       },
@@ -187,34 +191,33 @@ const GATE = {
 // current directory, and we are not running in that directory.
 const ENV_BLOCK =
   `mkdir -p ${WORK_DIR}/tmp ${FIGURES_DIR}\n` +
-  `export WINROOT="$(pwd -W)"   # Windows-форма пути, POSIX-форма ломает PowerShell\n` +
+  `export WINROOT="$(pwd -W)"   # Windows form; the POSIX form breaks PowerShell\n` +
   `export TMPDIR="$WINROOT/${WORK_DIR}/tmp" TEMP="$TMPDIR" TMP="$TMPDIR"\n` +
   `export KIMI_BASE_URL="https://api.kimi.com/coding/v1"\n` +
   `FIGGY="\${FIGGYBANANA_HOME:-$(echo "$PAPERBANANA_BIN" | tr '\\\\\\\\' '/' | ` +
   `sed 's#/[.]venv/Scripts/paperbanana.exe$##')}"\n` +
-  `test -d "$FIGGY/data" || { echo "не найден каталог figgybanana: $FIGGY"; exit 1; }\n` +
+  `test -d "$FIGGY/data" || { echo "figgybanana directory not found: $FIGGY"; exit 1; }\n` +
   `export GUIDELINES_PATH="${GUIDELINES}"\n` +
   `export REFERENCE_SET_PATH="${REFERENCE_SET}"\n` +
-  `echo "TEMP=$TEMP FIGGY=$FIGGY"   # TEMP обязан начинаться с C:/ — если с /c/, чини`
+  `echo "TEMP=$TEMP FIGGY=$FIGGY"   # TEMP must start with C:/ — if it starts with /c/, fix it`
 
 const TOOL_RULES =
-  `\n\nИНСТРУМЕНТ. Разрешай исполняемый файл в этом порядке и останавливайся на первом, ` +
-  `который ответил:\n` +
-  `1. переменная $PAPERBANANA_BIN — проверь её ПЕРВОЙ, до любого поиска; инструмент живёт в ` +
-  `своём virtualenv, это норма, а не исключение;\n` +
-  `2. paperbanana на PATH — только если переменная пуста.\n` +
-  `Пока $PAPERBANANA_BIN задана, «нет на PATH» не находка и не повод остановиться: ` +
-  `paperbanana, figgybanana, npm и pip не найдутся по построению.\n\n` +
-  `ОКРУЖЕНИЕ. Экспорты уже вписаны в саму команду ниже. Выполняй их и вызов инструмента ` +
-  `ОДНИМ вызовом Bash: каждый твой вызов Bash — новая оболочка, переменные из прошлого в ней ` +
-  `мертвы, а без TEMP мост до шлюза не прочитает свои токены и ответит 401. Не разноси по ` +
-  `двум вызовам.\n\n` +
-  `ПРОВАЙДЕРЫ. Картинки только через ss_gateway. Если шлюз отвечает 401 или ` +
-  `«missing bearer token» — останавливайся, ставь gateway_ok=false и объясни; НЕ переходи на ` +
-  `openai_imagen, google_imagen или любой другой провайдер картинок, это не твоё решение.\n` +
-  `Критик — Kimi K3. Если Kimi отвечает 403 или «usage limit», убери из команды два флага ` +
-  `--critic-vlm-provider и --critic-vlm-model: тогда критиком станет claude_code sonnet. ` +
-  `В отчёте назови по каждому рисунку, кто был критиком.`
+  `\n\nTHE TOOL. Resolve the executable in this order and stop at the first one that answers:\n` +
+  `1. the variable $PAPERBANANA_BIN — check it FIRST, before any search; the tool lives in its ` +
+  `own virtualenv, and that is the normal case, not the exception;\n` +
+  `2. paperbanana on PATH — only if the variable is empty.\n` +
+  `While $PAPERBANANA_BIN is set, "not on PATH" is neither a finding nor a reason to stop: ` +
+  `paperbanana, figgybanana, npm and pip will not be found there by construction.\n\n` +
+  `THE ENVIRONMENT. The exports are already written into the command below. Run them and the ` +
+  `tool call in ONE Bash invocation: every Bash call of yours is a fresh shell, variables from ` +
+  `the previous one are dead in it, and without TEMP the gateway bridge cannot read its tokens ` +
+  `and answers 401. Do not split this across two calls.\n\n` +
+  `PROVIDERS. Images go through ss_gateway and nothing else. If the gateway answers 401 or ` +
+  `"missing bearer token", stop, set gateway_ok=false and explain; do NOT fall back to ` +
+  `openai_imagen, google_imagen or any other image provider — that is not your decision.\n` +
+  `The critic is Kimi K3. If Kimi answers 403 or "usage limit", drop the two flags ` +
+  `--critic-vlm-provider and --critic-vlm-model from the command: the critic then becomes ` +
+  `claude_code sonnet. Name the critic per figure in your report.`
 
 // The environment and the command go into ONE Bash call, never two. Each Bash invocation is a
 // fresh shell, so exports from a previous call are gone — and when TEMP is gone the gateway
@@ -236,63 +239,68 @@ function drawCommand(slug, caption) {
   )
 }
 
-log(`[start] каталог=${run} статья=${source} рисунков=${wanted}`)
+log(`[start] dir=${run} article=${source} figures=${wanted}`)
 
 // --- Plan: the writer declares the figures, which is what its contract says it does ---------
 
 phase('Plan')
 const plan = await agent(
-  `Статья уже написана и лежит в ${source}. Менять её нельзя.\n\n` +
-    `Прочитай её и реши, какие ${wanted} рисунка объясняют механизм лучше, чем абзац текста. ` +
-    `Рисунок обязан нести то, что в прозе передаётся плохо: устройство, поток, соответствие ` +
-    `частей. Не иллюстрируй то, что и так понятно из одной фразы.\n\n` +
-    `Скопируй статью в ${ARTICLE_PATH} и вставь в копию ровно ${wanted} заглушки в формате ` +
-    `![подпись](figures/<slug>.png), каждую сразу после того абзаца, к которому она ` +
-    `относится. Подпись — по-русски, она говорит, что рисунок сообщает. Слаг — латиницей ` +
-    `через дефис. Больше в тексте ничего не меняй: ни слова, ни порядок разделов.\n\n` +
-    `Верни список рисунков: слаг, подпись дословно, раздел, после которого он стоит, и чем ` +
-    `он полезен.\n\nВЫХОД. Твой результат — ФАЙЛ ${ARTICLE_PATH}: копия статьи с заглушками. ` +
-    `Запиши его инструментом Write. Поля схемы — сведения о нём, а не он сам.`,
+  `The article is already written and lives at ${source}. It must not be changed.\n\n` +
+    `Read it and decide which ${wanted} figures explain the mechanism better than a paragraph ` +
+    `of prose does. A figure must carry what prose carries badly: a structure, a flow, a ` +
+    `correspondence between parts. Do not illustrate what one sentence already makes clear.\n\n` +
+    `Copy the article to ${ARTICLE_PATH} and insert into the copy exactly ${wanted} ` +
+    `placeholders of the form ![caption](figures/<slug>.png), each one directly after the ` +
+    `paragraph it belongs to. The caption is in the article's language and says what the ` +
+    `figure communicates. The slug is latin and hyphenated. Change nothing else in the text: ` +
+    `not a word, not the order of the sections.\n\n` +
+    `Return the list of figures: slug, caption verbatim, the section it stands after, and what ` +
+    `it is good for.\n\nOUTPUT. Your result is the FILE ${ARTICLE_PATH}: the copy of the ` +
+    `article with the placeholders. Write it with the Write tool. The schema fields describe ` +
+    `it, they are not it.`,
   { agentType: 'article-writer', model: 'sonnet', label: 'plan', phase: 'Plan', schema: PLAN },
 )
-log(`[plan] рисунков запланировано=${plan.figures.length}`)
+log(`[plan] figures planned=${plan.figures.length}`)
 for (const f of plan.figures) {
-  log(`[plan/${f.slug}] «${f.caption}» — после «${f.section}»`)
-  log(`[plan/${f.slug}/зачем] ${f.why}`)
+  log(`[plan/${f.slug}] «${f.caption}» — after «${f.section}»`)
+  log(`[plan/${f.slug}/why] ${f.why}`)
 }
 
 // --- Draw: one CLI run per figure; the tool owns the drawing, we own the brief --------------
 
 phase('Draw')
 let drawn = await agent(
-  `Тебе нужно нарисовать ${plan.figures.length} рисунка к статье ${ARTICLE_PATH}.\n\n` +
-    `Заглушки в статье:\n` +
-    plan.figures.map((f, i) => `${i + 1}. ${f.slug} — «${f.caption}» (раздел «${f.section}»)`).join('\n') +
-    `\n\nПо каждому рисунку:\n` +
-    `1. Прочитай в статье тот раздел, к которому он относится, и напиши бриф в ` +
-    `${WORK_DIR}/brief-<slug>.txt: сущности, что с чем связано, подписи, которые обязаны ` +
-    `появиться дословно, и что на картинке быть НЕ должно. Прозой, не обрывками. Обозначения ` +
-    `бери из статьи: если в тексте матрица зовётся Q, на рисунке она Q.\n` +
-    `   Статья русская, поэтому словесные подписи на рисунке тоже русские, а бриф пиши ` +
-    `по-русски. Формулы и имена матриц (X, Q, K, V, W^Q, n × d_k) — как в тексте, они ` +
-    `языка не имеют. Держи словесных подписей мало и покороче: генератор картинок рисует ` +
-    `кириллицу хуже латиницы, и длинная фраза скорее поедет, чем короткая.\n` +
-    `2. Запусти инструмент один раз этой командой, подставив свой bin, слаг и подпись:\n\n` +
-    drawCommand('<slug>', '<подпись>') +
-    `\n\n3. Инструмент сам называет каталог прогона и пишет туда final_output.png. Скопируй ` +
-    `его под имя из заглушки: cp ${WORK_DIR}/run_*/final_output.png ${FIGURES_DIR}/<slug>.png — ` +
-    `копируй именно тот прогон, который только что закончился, а не самый новый наугад. ` +
-    `Проверь, что файл существует и не пустой.\n` +
-    `4. После первого же рисунка открой ${WORK_DIR}/run_*/planning.json и посмотри поле ` +
-    `retrieved_examples. Если там пустой список — эталоны не подхватились, значит ` +
-    `REFERENCE_SET_PATH не доехал: останови работу и скажи об этом, не рисуй остальные ` +
-    `вслепую. Ретривер — половина того, за что этот инструмент взят.\n` +
-    `5. Если команда упала — прочитай вывод. Недоступный шлюз, исчерпанная квота и отвергнутый ` +
-    `бриф это три разных беды, и только последняя твоя. Один повтор с более коротким и ` +
-    `конкретным брифом; не вышло — запиши в failed и переходи к следующему рисунку.\n\n` +
-    `Напиши ${MANIFEST_PATH}: по каждому рисунку слаг, подпись, файл, точная команда, каталог ` +
-    `прогона, число итераций и кто был критиком. Смысл манифеста в команде: рисунок, который ` +
-    `захотят чуть другим, перерисовывается правкой одного брифа и одной строкой.` +
+  `You have ${plan.figures.length} figures to draw for the article ${ARTICLE_PATH}.\n\n` +
+    `The placeholders in the article:\n` +
+    plan.figures.map((f, i) => `${i + 1}. ${f.slug} — «${f.caption}» (section «${f.section}»)`).join('\n') +
+    `\n\nFor each figure:\n` +
+    `1. Read the section of the article it belongs to and write a brief into ` +
+    `${WORK_DIR}/brief-<slug>.txt: the entities, what connects to what, the labels that must ` +
+    `appear verbatim, and what must NOT be on the picture. In prose, not in fragments. Take ` +
+    `the notation from the article: if the text calls a matrix Q, it is Q on the figure.\n` +
+    `   The article is Russian, so the worded labels on the figure are Russian too, and the ` +
+    `brief is written in Russian. Formulas and matrix names (X, Q, K, V, W^Q, n × d_k) stay as ` +
+    `they are in the text — they have no language. Keep the worded labels few and short: the ` +
+    `image generator draws Cyrillic worse than Latin, and a long phrase is likelier to come ` +
+    `out mangled than a short one.\n` +
+    `2. Run the tool once with this command, substituting your bin, the slug and the caption:\n\n` +
+    drawCommand('<slug>', '<caption>') +
+    `\n\n3. The tool names its own run directory and writes final_output.png into it. Copy that ` +
+    `file to the name from the placeholder: cp ${WORK_DIR}/run_*/final_output.png ` +
+    `${FIGURES_DIR}/<slug>.png — copy the run that just finished, not the newest one at a ` +
+    `guess. Check that the file exists and is not empty.\n` +
+    `4. After the very first figure, open ${WORK_DIR}/run_*/planning.json and look at the ` +
+    `field retrieved_examples. An empty list there means the etalons were not picked up, which ` +
+    `means REFERENCE_SET_PATH did not arrive: stop and say so, do not draw the rest blind. The ` +
+    `retriever is half of what this tool was chosen for.\n` +
+    `5. If the command fails, read its output. An unreachable gateway, an exhausted quota and a ` +
+    `rejected brief are three different problems, and only the last one is yours. One retry ` +
+    `with a shorter, more concrete brief; if that fails, record it in failed and move on to ` +
+    `the next figure.\n\n` +
+    `Write ${MANIFEST_PATH}: per figure the slug, the caption, the file, the exact command, the ` +
+    `run directory, the number of iterations and who the critic was. The point of the manifest ` +
+    `is the command: a figure someone wants slightly different is redrawn by editing one brief ` +
+    `and running one line.` +
     TOOL_RULES,
   {
     agentType: 'illustrator',
@@ -302,51 +310,51 @@ let drawn = await agent(
     schema: DRAWN,
   },
 )
-log(`[draw] нарисовано=${drawn.done.length} провалов=${drawn.failed.length} шлюз_ok=${drawn.gateway_ok}`)
+log(`[draw] drawn=${drawn.done.length} failed=${drawn.failed.length} gateway_ok=${drawn.gateway_ok}`)
 for (const d of drawn.done) {
-  log(`[draw/${d.slug}] критик=${d.critic_provider} итераций=${d.iterations} прогон=${d.run_dir}`)
+  log(`[draw/${d.slug}] critic=${d.critic_provider} iterations=${d.iterations} run=${d.run_dir}`)
 }
-for (const f of drawn.failed) log(`[draw/провал] ${f.slug}: ${f.reason}`)
+for (const f of drawn.failed) log(`[draw/failed] ${f.slug}: ${f.reason}`)
 
 if (!drawn.gateway_ok) {
   // Loud and specific: this is a credential in the OS keychain, not something a prompt fixes.
-  log('[draw] ШЛЮЗ НЕ ОТВЕТИЛ: откройте «SS AI Setup» и нажмите Apply, затем повторите прогон')
+  log('[draw] THE GATEWAY DID NOT ANSWER: open "SS AI Setup", press Apply, then run again')
 }
 
 // --- Look and Redraw: our own eyes on the render, then targeted repair ----------------------
 
 const lookTask = (slugs) =>
-  `Посмотри на рисунки как читатель статьи ${ARTICLE_PATH}. Файлы: ` +
+  `Look at these figures as a reader of the article ${ARTICLE_PATH} would. The files: ` +
   slugs.map((s) => `${FIGURES_DIR}/${s}.png`).join(', ') +
-  `\n\nОткрой КАЖДЫЙ файл инструментом Read — ты умеешь смотреть картинки — и сверь с ` +
-  `подписью и с тем разделом статьи, к которому рисунок относится.\n\n` +
-  `По каждому реши, годится ли он в статью как есть. Смотри на: читаются ли подписи; те ли ` +
-  `это обозначения, что в тексте; нет ли выдуманных элементов, которых в статье нет; не ` +
-  `перевраны ли направления связей; не пустая ли картинка и не каша ли. Опечатки в подписях ` +
-  `внутри картинки — это дефект, их видно.\n\n` +
-  `Отдельно и придирчиво — КИРИЛЛИЦА. Генераторы картинок её ломают: буквы подменяются, ` +
-  `слова превращаются в похожий на русский набор знаков. Прочитай каждую русскую подпись ` +
-  `вслух про себя: если это не настоящее слово — дефект, так и напиши, с указанием, какая ` +
-  `подпись поехала. Статья с рисунком, где написана бессмыслица, хуже статьи без рисунка.\n\n` +
-  `Если для разглядывания мелочей режешь фрагменты — клади их в ${WORK_DIR}, а не в ` +
-  `${FIGURES_DIR}: там только то, что уйдёт в статью.
+  `\n\nOpen EVERY file with the Read tool — you can look at images — and check it against its ` +
+  `caption and against the section of the article it belongs to.\n\n` +
+  `For each one decide whether it is fit for the article as it stands. Look at: are the labels ` +
+  `legible; is the notation the same as in the text; are there invented elements the article ` +
+  `does not have; are the directions of any relations reversed; is the picture empty or a ` +
+  `mess. Typos inside the picture's labels are a defect and they are visible.\n\n` +
+  `Separately and pedantically — CYRILLIC. Image generators break it: letters get substituted ` +
+  `and words turn into Russian-looking noise. Read every Russian label out to yourself: if it ` +
+  `is not a real word, that is a defect, and say which label went wrong. An article with a ` +
+  `figure that has gibberish written on it is worse than an article with no figure.\n\n` +
+  `If you crop fragments to inspect details, put them in ${WORK_DIR}, not in ${FIGURES_DIR}: ` +
+  `that directory holds only what ships with the article.
 
 ` +
-  `Дефекты формулируй так, чтобы их можно было отдать рисовальщику как правку: «стрелка от K ` +
-  `к Q нарисована в обратную сторону», а не «непонятно».\n\n` +
-  `СНАЧАЛА выпиши в labels_seen каждую надпись с картинки дословно — все, включая мелкие ` +
-  `подписи под блоками и на стрелках. Пока не выписал, вердикт не выноси: именно на этом ` +
-  `шаге видно то, что при беглом взгляде проскакивает.\n\n` +
-  `ЯЗЫК НАДПИСЕЙ. Статья русская, значит словесные надписи на рисунке русские. Латиницей ` +
-  `допустимы: обозначения и формулы (X, Q, K, V, W^Q, n × d_k, d_model) и те термины, ` +
-  `которые сама статья пишет латиницей — softmax и Attention. Всё остальное по-английски — ` +
-  `дефект: «output» вместо «выход», «shape unchanged» вместо «форма не меняется», «Concat» ` +
-  `там, где статья говорит о конкатенации. Три рисунка в одной статье обязаны быть на одном ` +
-  `языке; разнобой между ними — дефект, даже если каждый по отдельности читается.\n\n` +
-  `ТИПОГРАФИКА ОБОЗНАЧЕНИЙ. Индексы обязаны быть индексами: d_k и d_v печатаются как d с ` +
-  `маленькой k или v внизу, а не как «d_k» с подчёркиванием посреди строки. Сырое ` +
-  `подчёркивание в формуле — дефект, и он особенно заметен, когда на одной картинке рядом ` +
-  `стоят обе записи. Проверь каждую размерность по отдельности.`
+  `Phrase the defects so they can be handed to whoever redraws: "the arrow from K to Q is ` +
+  `drawn the wrong way round", not "unclear".\n\n` +
+  `FIRST write out into labels_seen every label on the picture verbatim — all of them, ` +
+  `including the small ones under blocks and on arrows. Pass no verdict until you have: this ` +
+  `is the step at which what a quick glance skips becomes visible.\n\n` +
+  `THE LANGUAGE OF THE LABELS. The article is Russian, so the worded labels are Russian. Latin ` +
+  `is allowed for: notation and formulas (X, Q, K, V, W^Q, n × d_k, d_model) and the terms the ` +
+  `article itself writes in Latin — softmax and Attention. Anything else in English is a ` +
+  `defect: "output" instead of «выход», "shape unchanged" instead of «форма не меняется», ` +
+  `"Concat" where the article speaks of concatenation. Three figures in one article must be in ` +
+  `one language; a mismatch between them is a defect even if each reads fine on its own.\n\n` +
+  `THE TYPOGRAPHY OF THE NOTATION. Subscripts must be subscripts: d_k and d_v are printed as a ` +
+  `d with a small k or v below, not as "d_k" with an underscore in the middle of the line. A ` +
+  `raw underscore in a formula is a defect, and it is especially visible when both spellings ` +
+  `sit side by side on one picture. Check every dimension separately.`
 
 phase('Look')
 let looked = await agent(lookTask(drawn.done.map((d) => d.slug)), {
@@ -364,32 +372,32 @@ while (redraws < MAX_REDRAWS && looked.checks.some((c) => !c.ok)) {
   redraws += 1
   const bad = looked.checks.filter((c) => !c.ok)
   phase('Redraw')
-  log(`[redraw/${redraws}] перерисовываем: ${bad.map((c) => c.slug).join(', ')}`)
+  log(`[redraw/${redraws}] redrawing: ${bad.map((c) => c.slug).join(', ')}`)
 
   const byslug = {}
   for (const d of drawn.done) byslug[d.slug] = d
 
   const again = await agent(
-    `Перерисуй только эти рисунки, остальные не трогай. По каждому — что с ним не так:\n\n` +
+    `Redraw only these figures and leave the rest alone. What is wrong with each:\n\n` +
       bad
         .map(
           (c, i) =>
-            `${i + 1}. ${c.slug} (каталог прогона ${byslug[c.slug] ? byslug[c.slug].run_dir : 'неизвестен'})\n` +
+            `${i + 1}. ${c.slug} (run directory ${byslug[c.slug] ? byslug[c.slug].run_dir : 'unknown'})\n` +
             c.defects.map((d) => `   - ${d}`).join('\n'),
         )
         .join('\n\n') +
-      `\n\nУ инструмента для этого есть штатный путь: продолжить существующий прогон и ` +
-      `передать замечания его критику. Экспорты и вызов — одним вызовом Bash.\n\n` +
+      `\n\nThe tool has a supported path for this: continue the existing run and hand the ` +
+      `defects to its critic. The exports and the call go in ONE Bash invocation.\n\n` +
       `${ENV_BLOCK}\n` +
-      `<bin> generate --output-dir ${WORK_DIR} --continue-run <каталог прогона> \\\n` +
+      `<bin> generate --output-dir ${WORK_DIR} --continue-run <run directory> \\\n` +
       `  --auto --max-iterations 2 \\\n` +
       `  --vlm-provider claude_code --vlm-model sonnet \\\n` +
       `  --critic-vlm-provider kimi --critic-vlm-model k3 \\\n` +
       `  --image-provider ss_gateway \\\n` +
-      `  --feedback "<замечания по этому рисунку одной строкой>"\n\n` +
-      `Если продолжение не сработает — правь бриф ${WORK_DIR}/brief-<slug>.txt по замечаниям ` +
-      `и запускай заново обычной командой. Готовый файл снова скопируй в ` +
-      `${FIGURES_DIR}/<slug>.png, поверх старого. Обнови ${MANIFEST_PATH}.` +
+      `  --feedback "<the defects for this figure, on one line>"\n\n` +
+      `If continuing does not work, edit the brief ${WORK_DIR}/brief-<slug>.txt according to ` +
+      `the defects and run the ordinary command again. Copy the finished file to ` +
+      `${FIGURES_DIR}/<slug>.png again, over the old one. Update ${MANIFEST_PATH}.` +
       TOOL_RULES,
     {
       agentType: 'illustrator',
@@ -400,9 +408,9 @@ while (redraws < MAX_REDRAWS && looked.checks.some((c) => !c.ok)) {
     },
   )
   for (const d of again.done) {
-    log(`[redraw/${redraws}/${d.slug}] критик=${d.critic_provider} итераций=${d.iterations}`)
+    log(`[redraw/${redraws}/${d.slug}] critic=${d.critic_provider} iterations=${d.iterations}`)
   }
-  for (const f of again.failed) log(`[redraw/${redraws}/провал] ${f.slug}: ${f.reason}`)
+  for (const f of again.failed) log(`[redraw/${redraws}/failed] ${f.slug}: ${f.reason}`)
 
   looked = await agent(lookTask(bad.map((c) => c.slug)), {
     model: 'sonnet',
@@ -419,16 +427,16 @@ while (redraws < MAX_REDRAWS && looked.checks.some((c) => !c.ok)) {
 
 phase('Gate')
 const gate = await agent(
-  `Выполни ровно эту команду из корня репозитория и верни её результат без изменений:\n\n` +
+  `Run exactly this command from the repository root and return its result unchanged:\n\n` +
     `python -X utf8 tools/gate.py --dir ${FIGURES_DIR} --min-entries ${plan.figures.length + 1}\n\n` +
-    `Верни разобранный отчёт полем report и сырой вывод полем stdout. Ничего не исправляй.`,
+    `Return the parsed report in the report field and the raw output in stdout. Correct nothing.`,
   { model: 'haiku', label: 'gate', phase: 'Gate', schema: GATE },
 )
 log(
-  `[gate] ok=${gate.report.ok} проблем=${gate.report.problems.length} ` +
-    `измерения=${JSON.stringify(gate.report.measures)}`,
+  `[gate] ok=${gate.report.ok} problems=${gate.report.problems.length} ` +
+    `measures=${JSON.stringify(gate.report.measures)}`,
 )
-for (const p of gate.report.problems) log(`[gate/проблема] ${p}`)
+for (const p of gate.report.problems) log(`[gate/problem] ${p}`)
 
 // A floor is not enough for a delivery directory. The vision check cropped fragments to look
 // at them closely and left four crop_*.png next to the figures; `--min-entries 4` counted
@@ -437,21 +445,21 @@ const expectedEntries = plan.figures.length + 1
 const actualEntries = gate.report.measures.entries
 if (typeof actualEntries === 'number' && actualEntries !== expectedEntries) {
   log(
-    `[gate] ЛИШНЕЕ В ПОСТАВКЕ: файлов ${actualEntries}, ожидалось ${expectedEntries} ` +
-      `(${plan.figures.length} рисунка и манифест). Рабочие файлы место в ${WORK_DIR}.`,
+    `[gate] EXTRA FILES IN THE DELIVERY: ${actualEntries} files, expected ${expectedEntries} ` +
+      `(${plan.figures.length} figures and the manifest). Working files belong in ${WORK_DIR}.`,
   )
 }
 
 const stillBad = looked.checks.filter((c) => !c.ok)
 if (stillBad.length) {
   // Same rule as the article loop: an unmet verdict goes into the log by name, never silently.
-  log(`[итог] НЕ ДОВЕДЕНО до качества: ${stillBad.map((c) => c.slug).join(', ')}`)
-  for (const c of stillBad) for (const d of c.defects) log(`[итог/дефект] ${c.slug}: ${d}`)
+  log(`[summary] NOT BROUGHT UP TO QUALITY: ${stillBad.map((c) => c.slug).join(', ')}`)
+  for (const c of stillBad) for (const d of c.defects) log(`[summary/defect] ${c.slug}: ${d}`)
 }
 
 log(
-  `[итог] запланировано=${plan.figures.length} нарисовано=${drawn.done.length} ` +
-    `перерисовок=${redraws} не_доведено=${stillBad.length} гейт_ok=${gate.report.ok}`,
+  `[summary] planned=${plan.figures.length} drawn=${drawn.done.length} ` +
+    `redraws=${redraws} not_good_enough=${stillBad.length} gate_ok=${gate.report.ok}`,
 )
 
 return {

@@ -28,14 +28,14 @@
 
 export const meta = {
   name: 'explainer-article',
-  description: 'Объяснительная статья по теме: поиск источников, разбор, письмо под критиком',
+  description: 'Explanatory article from a topic: find sources, reconcile them, write under critics',
   phases: [
-    { title: 'Brief', detail: 'вольный текст заказа → brief.md, аспекты и пороги' },
-    { title: 'Research', detail: 'источниковеды по аспектам, параллельно' },
-    { title: 'Analyse', detail: 'аналитик сводит источники в материал' },
-    { title: 'Verify', detail: 'созданы ли заявленные артефакты' },
-    { title: 'Write', detail: 'писатель под двумя критиками: по существу и по стилю' },
-    { title: 'Gate', detail: 'приёмка: арифметика и запреты через tools/gate.py' },
+    { title: 'Brief', detail: 'free-text order to brief.md, aspects and thresholds' },
+    { title: 'Research', detail: 'source finders per aspect, in parallel' },
+    { title: 'Analyse', detail: 'the analyst reconciles the sources into material' },
+    { title: 'Verify', detail: 'were the claimed artifacts actually created' },
+    { title: 'Write', detail: 'the writer under two critics: substance and style' },
+    { title: 'Gate', detail: 'acceptance: arithmetic and bans through tools/gate.py' },
   ],
 }
 
@@ -43,11 +43,11 @@ export const meta = {
 
 const run = typeof args === 'string' ? args : args && args.runDir
 if (!run) {
-  throw new Error('нужен каталог прогона: args.runDir, например docs-runs/attention')
+  throw new Error('a run directory is required: args.runDir, e.g. docs-runs/attention')
 }
 const order = (args && args.brief) || ''
 if (!order.trim()) {
-  throw new Error('нужен заказ: args.brief — тема, объём и пожелания одной строкой')
+  throw new Error('an order is required: args.brief — subject, length and wishes in one line')
 }
 
 // Every path is named here, by the script, and nowhere else. Agents receive paths and never
@@ -129,7 +129,7 @@ function task({ inputs, output, extra, noFile }) {
 // expensive of those assumptions sat in the last quarter of the script: `verdict.remarks`,
 // reached only after both writing rounds had already been paid for.
 function must(value, what) {
-  if (!value) throw new Error(`агент не вернул результат: ${what}`)
+  if (!value) throw new Error(`the agent returned nothing: ${what}`)
   return value
 }
 
@@ -356,8 +356,8 @@ function existenceCommand(paths) {
 
 // --- Brief -------------------------------------------------------------------------------
 
-log(`[start] каталог=${run}`)
-log(`[start] заказ: ${order.replace(/\s+/g, ' ').slice(0, 200)}`)
+log(`[start] dir=${run}`)
+log(`[start] order: ${order.replace(/\s+/g, ' ').slice(0, 200)}`)
 
 phase('Brief')
 const brief = must(
@@ -367,17 +367,17 @@ const brief = must(
     phase: 'Brief',
     schema: BRIEF_OUT,
   }),
-  'brief — без аспектов и языка дальше идти некуда',
+  'brief — without aspects and a language there is nowhere to go',
 )
 const minProse = brief.min_prose
 const maxProse = brief.max_prose
 const hasBounds = Boolean(minProse || maxProse)
 log(
-  `[brief] файл=${BRIEF_PATH} язык=${brief.language} ` +
-    `объём=${hasBounds ? `${minProse || '?'}–${maxProse || '?'}` : 'заказом не задан, гейт его не проверяет'} ` +
-    `аспектов=${brief.aspects.length}`,
+  `[brief] file=${BRIEF_PATH} language=${brief.language} ` +
+    `length=${hasBounds ? `${minProse || '?'}–${maxProse || '?'}` : 'not set by the order, the gate passes no verdict on it'} ` +
+    `aspects=${brief.aspects.length}`,
 )
-for (const a of brief.aspects) log(`[brief/аспект] ${a.slug}: ${a.question}`)
+for (const a of brief.aspects) log(`[brief/aspect] ${a.slug}: ${a.question}`)
 
 // --- Research: the fan-out lives in the script; an agent never produces a collection ---------
 
@@ -409,21 +409,21 @@ for (let i = 0; i < brief.aspects.length; i++) {
   const result = findings[i]
   const aspect = brief.aspects[i]
   if (!result) {
-    log(`[research/${aspect.slug}] агент не вернул результат`)
+    log(`[research/${aspect.slug}] the agent returned nothing`)
     continue
   }
   found.push({ aspect, path: sourcePathOf(aspect.slug), sources: result.sources })
   log(
-    `[research/${aspect.slug}] источников=${result.sources.length} ` +
-      `инструмент=${result.tool_used}`,
+    `[research/${aspect.slug}] sources=${result.sources.length} ` +
+      `tool=${result.tool_used}`,
   )
-  for (const s of result.sources) log(`[research/источник] ${s.title} — ${s.url}`)
+  for (const s of result.sources) log(`[research/source] ${s.title} — ${s.url}`)
 }
-if (found.length === 0) throw new Error('ни один источниковед не вернул результат')
+if (found.length === 0) throw new Error('not one source finder returned anything')
 
 const sourcePorts = found.map((f) => ({ port: `sources:${f.aspect.slug}`, path: f.path }))
 const totalSources = found.reduce((sum, f) => sum + f.sources.length, 0)
-log(`[research] аспектов_закрыто=${found.length}/${brief.aspects.length} источников=${totalSources}`)
+log(`[research] aspects_covered=${found.length}/${brief.aspects.length} sources=${totalSources}`)
 
 // --- Analyse: between reading and writing, or the writer paraphrases its last source ---------
 
@@ -445,13 +445,13 @@ let analysis = await agent(analyseTask, {
 // verification stage below is what decides whether the material actually exists.
 if (analysis) {
   log(
-    `[analyse] согласий=${analysis.agreements.length} расхождений=${analysis.disagreements.length} ` +
-      `пробелов=${analysis.gaps.length}`,
+    `[analyse] agreements=${analysis.agreements.length} disagreements=${analysis.disagreements.length} ` +
+      `gaps=${analysis.gaps.length}`,
   )
-  for (const d of analysis.disagreements) log(`[analyse/расхождение] ${d}`)
-  for (const g of analysis.gaps) log(`[analyse/пробел] ${g}`)
+  for (const d of analysis.disagreements) log(`[analyse/disagreement] ${d}`)
+  for (const g of analysis.gaps) log(`[analyse/gap] ${g}`)
 } else {
-  log('[analyse] АНАЛИТИК НЕ ВЕРНУЛ РЕЗУЛЬТАТ — проверка на диске решит, есть ли материал')
+  log('[analyse] THE ANALYST RETURNED NOTHING — the disk check decides whether material exists')
 }
 
 // --- Verify: a claimed path is not an artifact until something looks at the disk --------------
@@ -464,7 +464,7 @@ let existence = must(
     phase: 'Verify',
     schema: EXISTENCE,
   }),
-  'verify:1 — без проверки диска весь смысл этапа теряется',
+  'verify:1 — without the disk check this stage means nothing',
 )
 for (const c of existence.checks) {
   log(`[verify] ok=${c.ok} ${c.path}${c.problems.length ? ' | ' + c.problems.join('; ') : ''}`)
@@ -472,7 +472,7 @@ for (const c of existence.checks) {
 
 const materialCheck = existence.checks.find((c) => c.path.includes('material'))
 if (materialCheck && !materialCheck.ok) {
-  log(`[verify] МАТЕРИАЛ НЕ СОЗДАН, круг повтора: ${materialCheck.problems.join('; ')}`)
+  log(`[verify] MATERIAL NOT CREATED, retrying: ${materialCheck.problems.join('; ')}`)
   analysis = await agent(
     `The previous attempt left no file on disk: ${materialCheck.problems.join('; ')}\n\n` +
       analyseTask,
@@ -495,7 +495,7 @@ if (materialCheck && !materialCheck.ok) {
     log(`[verify/2] ok=${c.ok} ${c.path}${c.problems.length ? ' | ' + c.problems.join('; ') : ''}`)
   }
   if (!rechecked.length || rechecked.some((c) => !c.ok)) {
-    log('[verify/2] МАТЕРИАЛА ТАК И НЕТ — писатель пойдёт без него, это в отчёте')
+    log('[verify/2] STILL NO MATERIAL — the writer goes without it, and that is in the report')
   }
 }
 
@@ -551,10 +551,10 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
       phase: 'Write',
       schema: ARTICLE,
     }),
-    `write:${round} — без черновика раунд пуст`,
+    `write:${round} — without a draft the round is empty`,
   )
-  log(`[write/${round}] изменений=${article.changes.length}`)
-  for (const c of article.changes) log(`[write/${round}/правка] ${c}`)
+  log(`[write/${round}] changes=${article.changes.length}`)
+  for (const c of article.changes) log(`[write/${round}/change] ${c}`)
 
   // Measure before judging, so neither critic spends a remark on something already counted.
   const sized = await agent(carry(gateCommand(ARTICLE_PATH, minProse, maxProse)), {
@@ -568,10 +568,10 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
     : { ok: false, problems: ['the gate did not run — no measurements for this round'], measures: {} }
   gateProblems = sizedReport.problems
   log(
-    `[gate/${round}] ok=${sizedReport.ok} проблем=${gateProblems.length} ` +
-      `измерения=${JSON.stringify(sizedReport.measures)}`,
+    `[gate/${round}] ok=${sizedReport.ok} problems=${gateProblems.length} ` +
+      `measures=${JSON.stringify(sizedReport.measures)}`,
   )
-  for (const p of gateProblems) log(`[gate/${round}/проблема] ${p}`)
+  for (const p of gateProblems) log(`[gate/${round}/problem] ${p}`)
 
   const lastRound = round === MAX_ROUNDS
   const criticInputs = [
@@ -633,8 +633,8 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   ])
 
   verdict = judged || noVerdict('the critic on substance')
-  log(`[critic/${round}] вердикт=${verdict.verdict} замечаний=${verdict.remarks.length}`)
-  for (const r of verdict.remarks) log(`[critic/${round}/замечание] ${r}`)
+  log(`[critic/${round}] verdict=${verdict.verdict} remarks=${verdict.remarks.length}`)
+  for (const r of verdict.remarks) log(`[critic/${round}/remark] ${r}`)
 
   styleVerdict = styled || null
   if (styled) {
@@ -645,16 +645,16 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
     styleRemarks = styled.findings.map((f) => `«${f.quote}» — ${f.reason} → ${f.after}`)
     const c = styled.counters
     log(
-      `[style/${round}] вердикт=${styled.verdict} находок=${styleRemarks.length} ` +
-        `жирного=${c.bold_spans.length} штампов=${c.dead_phrases.length} ` +
-        `дефис_вместо_тире=${c.hyphen_for_dash}`,
+      `[style/${round}] verdict=${styled.verdict} findings=${styleRemarks.length} ` +
+        `bold=${c.bold_spans.length} dead_phrases=${c.dead_phrases.length} ` +
+        `hyphen_for_dash=${c.hyphen_for_dash}`,
     )
-    for (const span of c.bold_spans) log(`[style/${round}/жирное] ${span}`)
-    for (const phrase of c.dead_phrases) log(`[style/${round}/штамп] ${phrase}`)
-    for (const r of styleRemarks) log(`[style/${round}/замечание] ${r}`)
+    for (const span of c.bold_spans) log(`[style/${round}/bold] ${span}`)
+    for (const phrase of c.dead_phrases) log(`[style/${round}/dead_phrase] ${phrase}`)
+    for (const r of styleRemarks) log(`[style/${round}/finding] ${r}`)
   } else {
     styleRemarks = noVerdict('the style critic').remarks
-    log(`[style/${round}] СТИЛЕВОЙ КРИТИК НЕ ВЕРНУЛ ВЕРДИКТ — считаем круг незакрытым`)
+    log(`[style/${round}] THE STYLE CRITIC RETURNED NO VERDICT — the round counts as open`)
   }
 
   // All three conditions. An article the mechanism critic likes but written in machine
@@ -678,9 +678,9 @@ const openItems = [
 if (openItems.length) {
   const passed = verdict.verdict === 'ok' && stylePassed && !gateProblems.length
   log(
-    `[unresolved] раундов=${rounds} вердикт=${verdict.verdict} ` +
-      `стиль=${styleVerdict ? styleVerdict.verdict : 'нет вердикта'} ` +
-      `${passed ? 'принято с замечаниями' : 'НЕ принято'}: пунктов=${openItems.length}`,
+    `[unresolved] rounds=${rounds} verdict=${verdict.verdict} ` +
+      `style=${styleVerdict ? styleVerdict.verdict : 'no verdict'} ` +
+      `${passed ? 'accepted with remarks' : 'NOT accepted'}: items=${openItems.length}`,
   )
   const wrote = await agent(
     (passed
@@ -694,10 +694,10 @@ if (openItems.length) {
   )
   unresolvedPath = wrote && wrote.written ? UNRESOLVED_PATH : null
   if (unresolvedPath) {
-    log(`[unresolved] файл=${unresolvedPath}`)
+    log(`[unresolved] file=${unresolvedPath}`)
   } else {
-    log(`[unresolved] ФАЙЛ НЕ ЗАПИСАН, незакрытые пункты остаются: ${openItems.length}`)
-    for (const item of openItems) log(`[unresolved/пункт] ${item}`)
+    log(`[unresolved] FILE NOT WRITTEN, open items remain: ${openItems.length}`)
+    for (const item of openItems) log(`[unresolved/item] ${item}`)
   }
 }
 
@@ -713,22 +713,22 @@ const gate = await agent(carry(gateCommand(ARTICLE_PATH, minProse, maxProse)), {
 const report = gate
   ? gate.report
   : { ok: false, problems: ['the final gate did not run'], measures: {} }
-log(`[gate] ok=${report.ok} измерения=${JSON.stringify(report.measures)}`)
-for (const p of report.problems) log(`[gate/проблема] ${p}`)
+log(`[gate] ok=${report.ok} measures=${JSON.stringify(report.measures)}`)
+for (const p of report.problems) log(`[gate/problem] ${p}`)
 
 // The agent in this chain is a link that can alter the data, and in one run it did: check that
 // the verdict it returned matches the problems it returned, and that the raw output is there.
 if (report.ok !== (report.problems.length === 0)) {
-  log(`[gate] РАСХОЖДЕНИЕ: ok=${report.ok}, а проблем ${report.problems.length}`)
+  log(`[gate] MISMATCH: ok=${report.ok} but ${report.problems.length} problems`)
 }
 if (!gate || !gate.stdout.includes('"ok"')) {
-  log('[gate] РАСХОЖДЕНИЕ: в сыром выводе нет JSON гейта — возможно, команда не запускалась')
+  log('[gate] MISMATCH: no gate JSON in the raw output — the command may not have run')
 }
 
 log(
-  `[итог] аспектов=${brief.aspects.length} источников=${totalSources} кругов=${rounds} ` +
-    `вердикт=${verdict.verdict} стиль=${styleVerdict ? styleVerdict.verdict : 'нет вердикта'} ` +
-    `гейт_ok=${report.ok} незакрытых=${openItems.length}`,
+  `[summary] aspects=${brief.aspects.length} sources=${totalSources} rounds=${rounds} ` +
+    `verdict=${verdict.verdict} style=${styleVerdict ? styleVerdict.verdict : 'no verdict'} ` +
+    `gate_ok=${report.ok} open_items=${openItems.length}`,
 )
 
 return {
