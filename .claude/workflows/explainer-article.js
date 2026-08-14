@@ -60,17 +60,63 @@ const ARTICLE_PATH = `${run}/article.md`
 const UNRESOLVED_PATH = `${run}/UNRESOLVED.md`
 const sourcePathOf = (slug) => `${run}/sources/${slug}.md`
 
-// The author's voice profile, checked into the repository rather than written into a
-// prompt. It goes to the writer and to the style critic unchanged, so the register the
-// article is written in and the register it is judged by are one file — two copies of a
-// style description drift inside a single round.
-const VOICE_PATH = 'library/style/author-voice.md'
+// --- Configuration: everything a caller can change without editing this file ---------------
+//
+// The hardcode that stays is the SHAPE of the pipeline: which stages exist, which agent runs
+// each one, which artifact each one leaves, and which of them may fail without stopping the
+// run. That is the thing this file is for.
+//
+// Everything that is a number, a threshold, a model or a language policy is a default here
+// and an override in `args.config`. The test is whether two legitimate runs of this same
+// pipeline would want different values: two do want different models, different round
+// budgets and a different voice, and none of them want a different stage order. A value you
+// have to edit the script to change is a value nobody changes.
+const cfg = (args && args.config) || {}
 
-const MAX_ROUNDS = 2
-const MAX_ASPECTS = 4
-// Length is not defaulted. When the order says nothing about size, the gate still measures
-// the article and reports the numbers but passes no verdict on them: inventing a ceiling
-// would hold the text to a figure nobody asked for, and the writer would be revised to it.
+const MAX_ROUNDS = cfg.maxRounds || 2
+const MAX_ASPECTS = cfg.maxAspects || 4
+
+// A file that exists and holds 200 characters is a file an agent created and walked away
+// from. Existence is therefore measured, not tested.
+const MIN_ARTIFACT_CHARS = cfg.minArtifactChars || 200
+
+// Language policy, not pipeline shape. `ru_slop` only matches Russian, so a pipeline writing
+// in English gains nothing from it and pays nothing for it; `no_bold` applies to any
+// language. A caller writing for a publication that wants bold passes ['ru_slop'].
+const GATE_PRESETS = cfg.gatePresets || ['ru_slop', 'no_bold']
+
+// The author's voice profile. `null` is a real answer, not a missing one: a pipeline writing
+// under someone else's byline supplies no voice and the writer falls back to the general
+// anti-slop rules that hold regardless of author.
+const VOICE_PATH =
+  cfg.voicePath === undefined ? 'library/style/author-voice.md' : cfg.voicePath
+const voicePort = VOICE_PATH ? [{ port: 'voice', path: VOICE_PATH }] : []
+
+// Per stage, not per run. The judgement stages carry the article's quality and the carrying
+// stages run a command and parse JSON; one model for both wastes money at one end and
+// quality at the other.
+const MODELS = Object.assign(
+  {
+    brief: 'opus',
+    find: 'sonnet',
+    analyse: 'opus',
+    write: 'opus',
+    critic: 'opus',
+    style: 'opus',
+    gate: 'haiku',
+    record: 'haiku',
+  },
+  cfg.models || {},
+)
+
+// The gate is this repository's own script, so the invocation is a default rather than a
+// constant: a pipeline vendored elsewhere keeps the stage and changes the path.
+const GATE_TOOL = cfg.gateTool || 'python -X utf8 tools/gate.py'
+
+// Length is not defaulted, and that is deliberate rather than an omission. When the order
+// says nothing about size, the gate still measures the article and reports the numbers but
+// passes no verdict on them: inventing a ceiling would hold the text to a figure nobody
+// asked for, and the writer would be revised to it.
 
 // --- No prompts in this file ----------------------------------------------------------------
 //
@@ -320,8 +366,8 @@ function gateCommand(path, min, max) {
   const bounds = []
   if (min) bounds.push(`--min-prose ${min}`)
   if (max) bounds.push(`--max-prose ${max}`)
-  bounds.push('--forbid-preset ru_slop --forbid-preset no_bold')
-  return `python -X utf8 tools/gate.py --file ${path} ${bounds.join(' ')}`.trim()
+  for (const preset of GATE_PRESETS) bounds.push(`--forbid-preset ${preset}`)
+  return `${GATE_TOOL} --file ${path} ${bounds.join(' ')}`.trim()
 }
 
 // What gate_runner receives is a list of commands and nothing else. How to run them, what not
@@ -335,7 +381,9 @@ function commands(list) {
 // is why existence is measured rather than tested: `--min-length` turns "is it there" and "is
 // there anything in it" into one number the script can branch on.
 function existenceCommands(paths) {
-  return commands(paths.map((p) => `python -X utf8 tools/gate.py --file ${p} --min-length 200`))
+  return commands(
+    paths.map((p) => `${GATE_TOOL} --file ${p} --min-length ${MIN_ARTIFACT_CHARS}`),
+  )
 }
 
 // Same for verbatim_writer: a destination, a heading, and the items. Everything about not
@@ -365,7 +413,7 @@ const brief = must(
       // agenda: aspects that pull apart send four finders at four different bodies of
       // material, aspects that are one question reworded send them all at the same page and
       // no later stage recovers from that.
-      model: 'opus',
+      model: MODELS.brief,
       label: 'brief',
       phase: 'Brief',
       schema: BRIEF_OUT,
@@ -396,7 +444,7 @@ const findings = await parallel(
       }),
       {
         agentType: 'source-finder',
-        model: 'sonnet',
+        model: MODELS.find,
         label: `find:${aspect.slug}`,
         phase: 'Research',
         schema: FOUND,
@@ -439,7 +487,7 @@ const analyseTask = task({
 phase('Analyse')
 let analysis = await agent(analyseTask, {
   agentType: 'domain-analyst',
-  model: 'opus',
+  model: MODELS.analyse,
   label: 'analyse',
   phase: 'Analyse',
   schema: ANALYSIS,
@@ -464,7 +512,7 @@ phase('Verify')
 let existence = must(
   await agent(existenceCommands([...found.map((f) => f.path), MATERIAL_PATH]), {
     agentType: 'gate-runner',
-    model: 'haiku',
+    model: MODELS.gate,
     label: 'verify:1',
     phase: 'Verify',
     schema: EXISTENCE,
@@ -483,7 +531,7 @@ if (materialCheck && !materialCheck.ok) {
       analyseTask,
     {
       agentType: 'domain-analyst',
-      model: 'opus',
+      model: MODELS.analyse,
       label: 'analyse:2',
       phase: 'Verify',
       schema: ANALYSIS,
@@ -491,7 +539,7 @@ if (materialCheck && !materialCheck.ok) {
   )
   existence = await agent(existenceCommands([MATERIAL_PATH]), {
     agentType: 'gate-runner',
-    model: 'haiku',
+    model: MODELS.gate,
     label: 'verify:2',
     phase: 'Verify',
     schema: EXISTENCE,
@@ -528,7 +576,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   const writeInputs = [
     { port: 'brief', path: BRIEF_PATH },
     { port: 'material', path: MATERIAL_PATH },
-    { port: 'voice', path: VOICE_PATH },
+    ...voicePort,
     ...sourcePorts,
   ]
   // Order of the revision block is the order of authority: what a regex measured, then what
@@ -552,7 +600,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   const article = must(
     await agent(task({ inputs: writeInputs, output: ARTICLE_PATH, extra: revision }), {
       agentType: 'article-writer',
-      model: 'opus',
+      model: MODELS.write,
       label: `write:${round}`,
       phase: 'Write',
       schema: ARTICLE,
@@ -565,7 +613,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   // Measure before judging, so neither critic spends a remark on something already counted.
   const sized = await agent(commands([gateCommand(ARTICLE_PATH, minProse, maxProse)]), {
     agentType: 'gate-runner',
-    model: 'haiku',
+    model: MODELS.gate,
     label: `gate:${round}`,
     phase: 'Write',
     schema: GATE,
@@ -606,7 +654,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
         }),
         {
           agentType: 'article-critic',
-          model: 'opus',
+          model: MODELS.critic,
           label: `critic:${round}`,
           phase: 'Write',
           schema: VERDICT,
@@ -618,7 +666,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
           inputs: [
             { port: 'draft', path: ARTICLE_PATH },
             { port: 'brief', path: BRIEF_PATH },
-            { port: 'voice', path: VOICE_PATH },
+            ...voicePort,
           ],
           noFile: true,
           extra:
@@ -631,7 +679,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
         }),
         {
           agentType: 'style-critic-ru',
-          model: 'opus',
+          model: MODELS.style,
           label: `style:${round}`,
           phase: 'Write',
           schema: STYLE_VERDICT,
@@ -697,7 +745,7 @@ if (openItems.length) {
         : 'The revision rounds ran out and these remarks were left open',
       openItems,
     ),
-    { agentType: 'verbatim-writer', model: 'haiku', label: 'unresolved', phase: 'Write', schema: WROTE },
+    { agentType: 'verbatim-writer', model: MODELS.record, label: 'unresolved', phase: 'Write', schema: WROTE },
   )
   unresolvedPath = wrote && wrote.written ? UNRESOLVED_PATH : null
   if (unresolvedPath) {
@@ -713,7 +761,7 @@ if (openItems.length) {
 phase('Gate')
 const gate = await agent(commands([gateCommand(ARTICLE_PATH, minProse, maxProse)]), {
   agentType: 'gate-runner',
-  model: 'haiku',
+  model: MODELS.gate,
   label: 'gate:final',
   phase: 'Gate',
   schema: GATE,
