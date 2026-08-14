@@ -359,6 +359,17 @@ const ROUNDS = {
   },
 }
 
+// No `path` field, and that omission is the whole point. It used to be here and it cost a
+// round: the checks came back as absolute Windows paths with backslashes while the script
+// compared against the relative POSIX form it had passed in, nothing matched, and four
+// finders plus the analyst re-ran on material that was already on disk. The previous run of
+// the same code returned relative paths and worked — which is worse than failing, because a
+// bug that only sometimes fires waits for the expensive run.
+//
+// The script named the paths and passed them in order; gate_runner returns one result per
+// command in that same order, so the index is the identity. Asking an agent to hand a path
+// back is asking it to re-derive something already known, and the project invariant says not
+// to: a `path` field in a schema turns "say where it is" into a substitute for "put it there".
 const EXISTENCE = {
   type: 'object',
   required: ['checks'],
@@ -367,9 +378,8 @@ const EXISTENCE = {
       type: 'array',
       items: {
         type: 'object',
-        required: ['path', 'ok', 'problems'],
+        required: ['ok', 'problems'],
         properties: {
-          path: { type: 'string' },
           ok: { type: 'boolean' },
           problems: { type: 'array', items: { type: 'string' } },
         },
@@ -488,19 +498,33 @@ let verdict = null
 let styleVerdict = null
 let gateProblems = []
 let styleRemarks = []
+// The measurement, kept past the iteration that took it: the next round is told its budget in
+// characters, and only the gate knows how many there are.
+let measuredProse = null
 if (cfg.fresh) {
   log('[resume] config.fresh — всё пересобирается с нуля, ничего не переиспользуется')
 } else {
   phase('Resume')
-  const onDisk = await agent(existenceCommands([...sourcePaths, MATERIAL_PATH, ARTICLE_PATH]), {
+  const resumePaths = [...sourcePaths, MATERIAL_PATH, ARTICLE_PATH]
+  const onDisk = await agent(existenceCommands(resumePaths), {
     agentType: 'gate-runner',
     model: MODELS.gate,
     label: 'resume',
     phase: 'Resume',
     schema: EXISTENCE,
   })
-  for (const c of (onDisk && onDisk.checks) || []) {
-    if (c.ok) present.add(c.path)
+  const resumeChecks = (onDisk && onDisk.checks) || []
+  if (resumeChecks.length !== resumePaths.length) {
+    // One result per command is the contract. A different count means the results cannot be
+    // matched to paths at all, and guessing which is which would reuse the wrong file.
+    log(
+      `[resume] проверок ${resumeChecks.length} на ${resumePaths.length} путей — ` +
+        `сопоставить нельзя, ничего не переиспользуем`,
+    )
+  } else {
+    resumePaths.forEach((path, i) => {
+      if (resumeChecks[i].ok) present.add(path)
+    })
   }
   log(
     `[resume] найдено готового: источников ${sourcePaths.filter((p) => present.has(p)).length}` +
@@ -538,6 +562,30 @@ if (cfg.fresh) {
     )
   } else {
     log('[resume/rounds] записей о кругах нет, начинаем с первого')
+  }
+
+  // Measure the draft here as well when a previous launch left one. Otherwise the first round
+  // of a resumed run builds its revision block with no measurement — the gate of the round
+  // before it died with that process — and the length budget silently goes missing exactly
+  // when the run is being continued because the length was wrong.
+  if (present.has(ARTICLE_PATH) && startRound > 1) {
+    const sizedNow = await agent(commands([gateCommand(ARTICLE_PATH, minProse, maxProse)]), {
+      agentType: 'gate-runner',
+      model: MODELS.gate,
+      label: 'resume:size',
+      phase: 'Resume',
+      schema: GATE,
+    })
+    if (sizedNow && sizedNow.report) {
+      gateProblems = sizedNow.report.problems
+      measuredProse =
+        typeof sizedNow.report.measures.prose_chars === 'number'
+          ? sizedNow.report.measures.prose_chars
+          : null
+      log(`[resume/size] черновик: прозы=${measuredProse} проблем=${gateProblems.length}`)
+    } else {
+      log('[resume/size] ЧЕРНОВИК НЕ ИЗМЕРЕН — круг пойдёт без бюджета по объёму')
+    }
   }
 }
 
@@ -649,11 +697,26 @@ let existence = must(
   }),
   'verify:1 — without the disk check this stage means nothing',
 )
-for (const c of existence.checks) {
-  log(`[verify] ok=${c.ok} ${c.path}${c.problems.length ? ' | ' + c.problems.join('; ') : ''}`)
-}
+const verifyPaths = [...found.map((f) => f.path), MATERIAL_PATH]
+existence.checks.forEach((c, i) => {
+  log(
+    `[verify] ok=${c.ok} ${verifyPaths[i] || '(лишняя проверка)'}` +
+      `${c.problems.length ? ' | ' + c.problems.join('; ') : ''}`,
+  )
+})
 
-const materialCheck = existence.checks.find((c) => c.path.includes('material'))
+// The material is the last path passed, so it is the last check returned. By index, not by
+// matching a substring of a path the agent chose how to spell.
+const materialCheck =
+  existence.checks.length === verifyPaths.length
+    ? existence.checks[verifyPaths.length - 1]
+    : null
+if (!materialCheck) {
+  log(
+    `[verify] проверок ${existence.checks.length} на ${verifyPaths.length} путей — ` +
+      `материал не сверен`,
+  )
+}
 if (materialCheck && !materialCheck.ok) {
   log(`[verify] MATERIAL NOT CREATED, retrying: ${materialCheck.problems.join('; ')}`)
   analysis = await agent(
@@ -676,7 +739,10 @@ if (materialCheck && !materialCheck.ok) {
   })
   const rechecked = existence ? existence.checks : []
   for (const c of rechecked) {
-    log(`[verify/2] ok=${c.ok} ${c.path}${c.problems.length ? ' | ' + c.problems.join('; ') : ''}`)
+    log(
+      `[verify/2] ok=${c.ok} ${MATERIAL_PATH}` +
+        `${c.problems.length ? ' | ' + c.problems.join('; ') : ''}`,
+    )
   }
   if (!rechecked.length || rechecked.some((c) => !c.ok)) {
     log('[verify/2] STILL NO MATERIAL — the writer goes without it, and that is in the report')
@@ -711,18 +777,49 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
     ...voicePort,
     ...sourcePorts,
   ]
-  // Order of the revision block is the order of authority: what a regex measured, then what
-  // the mechanism critic found, then style. A writer that runs out of attention runs out of
-  // it on the last section, so the section that cannot be argued with goes first.
+  // Order of the revision block is the order of authority: the length budget, then what a
+  // regex measured, then the mechanism critic, then style. A writer that runs out of attention
+  // runs out of it on the last section, so what cannot be argued with goes first.
+  //
+  // The budget is stated as arithmetic because a sentence did not work. Round 3 of a live run
+  // was handed "max_prose 30000 exceeded (got 30616)" as one item among sixteen and answered
+  // it by adding nine thousand characters of well-sourced material. The script knows the
+  // ceiling and the measurement, so it can say how much to remove instead of hoping the
+  // writer infers it.
+  const overBy = maxProse && measuredProse ? measuredProse - maxProse : 0
+  const underBy = minProse && measuredProse ? minProse - measuredProse : 0
+  const budget =
+    overBy > 0
+      ? `LENGTH BUDGET. The draft measures ${measuredProse} characters of readable prose ` +
+        `against a ceiling of ${maxProse}: it is ${overBy} over. This round must END SHORTER ` +
+        `than it started — remove at least ${overBy} characters. Every other item below has to ` +
+        `be satisfied by cutting, or by replacing text with something no longer. Adding a ` +
+        `paragraph is not available this round, however well it would serve the article; if a ` +
+        `remark cannot be honoured inside the budget, leave it and say which one.\n\n`
+      : underBy > 0
+        ? `LENGTH BUDGET. The draft measures ${measuredProse} characters of readable prose ` +
+          `against a floor of ${minProse}: it is ${underBy} short. Close the gap with substance ` +
+          `the sources carry, not by restating what the article already says.\n\n`
+        : ''
+
+  // A verdict of `ok` with remarks means "publishable, and here are some notes". Replaying
+  // those notes as work orders is what filled the round that was supposed to shorten the text.
+  const substanceHeader =
+    verdict && verdict.verdict === 'ok'
+      ? `THE CRITIC ON SUBSTANCE passed this draft. The notes below are OPTIONAL — take one ` +
+        `only if it costs no length:`
+      : `THE CRITIC ON SUBSTANCE:`
+
   const revision =
     round === 1
       ? null
-      : (gateProblems.length
+      : budget +
+        (gateProblems.length
           ? `THE GATE (a deterministic check, not an opinion — act on all of it):\n` +
             gateProblems.map((p, i) => `${i + 1}. ${p}`).join('\n') +
             '\n\n'
           : '') +
-        `THE CRITIC ON SUBSTANCE:\n` +
+        `${substanceHeader}\n` +
         verdict.remarks.map((r, i) => `${i + 1}. ${r}`).join('\n') +
         (styleRemarks.length
           ? `\n\nTHE STYLE CRITIC (the author's voice, machine patterns):\n` +
@@ -763,6 +860,8 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
     ? sized.report
     : { ok: false, problems: ['the gate did not run — no measurements for this round'], measures: {} }
   gateProblems = sizedReport.problems
+  measuredProse =
+    typeof sizedReport.measures.prose_chars === 'number' ? sizedReport.measures.prose_chars : null
   log(
     `[gate/${round}] ok=${sizedReport.ok} problems=${gateProblems.length} ` +
       `measures=${JSON.stringify(sizedReport.measures)}`,

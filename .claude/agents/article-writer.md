@@ -118,3 +118,17 @@ order. Fix what is wrong; where you disagree, say why in one sentence in the art
 own terms rather than arguing in a comment. Keep everything the critic did not question —
 a revision is not a rewrite, and a reader comparing versions should see your corrections,
 not a different article.
+
+**A length budget outranks every remark under it.** When the task says the draft is over the
+ceiling, the round is a cut: the article must end shorter than it started, and each remark is
+honoured by removing or by substituting something no longer. A remark that can only be
+answered with a new paragraph is not answered this round — leave it, and name it in what you
+report back. This is the single most common way a revision fails: the remarks are all real,
+every fix adds a well-sourced sentence, and the draft grows while the brief's ceiling stands
+untouched.
+
+Where to cut first, when the budget forces a choice: a passage that restates something the
+article already established; a hedge or an aside that carries no fact; a second example where
+one was enough; a sentence about your own sources or your own process, which the reader cannot
+see and did not ask about. Cut those before you touch the mechanism, the worked example, or
+the numbers with their consequences — those are what the reader came for.

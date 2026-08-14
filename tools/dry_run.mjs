@@ -54,21 +54,22 @@ function fill(schema, prompt) {
     case 'object': {
       const out = {}
       for (const [key, sub] of Object.entries(schema.properties ?? {})) {
-        // A `checks` array is filled from its own item schema, not from a hardcoded shape:
-        // different stages report different fields. Only a `path` property gets special
-        // treatment, echoing the paths the prompt listed so lookups by path still match.
+        // A `checks` array gets one entry per path the prompt asked about, because the script
+        // matches results to paths BY INDEX — one result per command, in order. A stub that
+        // returns a single entry for four commands exercises only the mismatch branch, and the
+        // reuse branch it is supposed to cover goes untested. That happened: the schema stopped
+        // carrying a `path` field (deliberately — the script must not ask for paths back), the
+        // old code keyed its special case off that field, and the count silently became 1.
         if (key === 'checks' && sub && sub.type === 'array') {
           const item = sub.items ?? {}
-          const props = item.properties ?? {}
-          if (props.path) {
-            out[key] = pathsFromPrompt(prompt).map((p) => ({
-              ...fill(item, prompt),
-              path: p,
-              problems: happy ? [] : [`output missing: ${p}`],
-            }))
-          } else {
-            out[key] = fill(sub, prompt)
-          }
+          const paths = pathsFromPrompt(prompt)
+          out[key] = paths.map((p) => {
+            const entry = { ...fill(item, prompt), problems: happy ? [] : [`output missing: ${p}`] }
+            // Echo the path only when the schema asks for one, so a stub never invents a field
+            // the real agent was not told to return.
+            if ((item.properties ?? {}).path) entry.path = p
+            return entry
+          })
           continue
         }
         if (key === 'problems') {
