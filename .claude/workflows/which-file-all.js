@@ -11,11 +11,16 @@ export const meta = {
 }
 
 const AGENTS = [
+  'brief-writer',
   'source-finder',
   'domain-analyst',
   'article-writer',
+  'example-verifier',
+  'article-fact-checker',
   'article-critic',
   'style-critic-ru',
+  'gate-runner',
+  'verbatim-writer',
 ]
 
 const PROOF = {

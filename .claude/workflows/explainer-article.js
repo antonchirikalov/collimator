@@ -12,10 +12,19 @@
 // own output and produced neither. Invariant I5 exists for exactly this: I/O instructions are
 // never hand-written.
 //
-// No prompt remains. Nine call sites, nine library agents, and what leaves this file is only
-// what the script alone knows: paths, commands, items, round numbers. The brief node was the
-// last holdout — justified as "a builtin, engine code rather than an agent", which was true in
-// refract and stopped being true here, where nothing executes anything.
+// No prompt remains. Every call site is a library agent that already knows its job, and what
+// leaves this file is only what the script alone knows: paths, commands, items, round numbers.
+// The brief node was the last holdout — justified as "a builtin, engine code rather than an
+// agent", which was true in refract and stopped being true here, where nothing executes
+// anything.
+//
+// The round is a chain and then a fan-out: writer, then two correctors that fix what is
+// decidable (the example's arithmetic, the claims against the notes), then the gate, then two
+// critics in parallel on what is left. That shape was arrived at expensively. With the writer
+// and two general critics alone, a live run spent six rounds and five million tokens, and the
+// same five remarks came back word for word: a critic can only report a misattribution, and
+// reporting it costs a round to fix. Anything a corrector can settle should never become a
+// remark at all.
 //
 // Style is not a prompt here either. The author's voice lives in library/style/author-voice.md
 // and travels as an input port to the writer and to the style critic; the mechanical half of
@@ -35,7 +44,7 @@ export const meta = {
     { title: 'Research', detail: 'source finders per aspect, in parallel' },
     { title: 'Analyse', detail: 'the analyst reconciles the sources into material' },
     { title: 'Verify', detail: 'were the claimed artifacts actually created' },
-    { title: 'Write', detail: 'the writer under two critics: substance and style' },
+    { title: 'Write', detail: 'writer, two correctors, then two critics in parallel' },
     { title: 'Gate', detail: 'acceptance: arithmetic and bans through tools/gate.py' },
   ],
 }
@@ -111,6 +120,11 @@ const MODELS = Object.assign(
     style: 'opus',
     gate: 'haiku',
     record: 'haiku',
+    // Arithmetic it runs rather than judges, so the shell matters more than the model.
+    verify: 'sonnet',
+    // Attribution against notes is reading comprehension under pressure to leave things
+    // alone, which is exactly where a weaker model invents corrections.
+    factcheck: 'opus',
   },
   cfg.models || {},
 )
@@ -119,6 +133,14 @@ const MODELS = Object.assign(
 // constant: a pipeline vendored elsewhere keeps the stage and changes the path.
 const GATE_TOOL = cfg.gateTool || 'python -X utf8 tools/gate.py'
 const ROUNDS_TOOL = cfg.roundsTool || 'python -X utf8 tools/rounds.py'
+
+// The two correctors between the writer and the critics. On by default and switchable off,
+// because a pipeline whose documents carry no arithmetic and no citations pays for them for
+// nothing. What they buy is rounds: six rounds of a live run spent their remarks on exactly two
+// things — an example whose numbers drifted, and attributions that did not match the notes — and
+// a critic can only report those, while a corrector fixes them inside the round they appeared
+// in. A remark that costs a round to fix is a remark that should not have been a remark.
+const USE_CORRECTORS = cfg.correctors !== false
 
 // Length is not defaulted, and that is deliberate rather than an omission. When the order
 // says nothing about size, the gate still measures the article and reports the numbers but
@@ -331,6 +353,55 @@ const STYLE_VERDICT = {
   },
 }
 
+// Both correctors hand back the article and account for what they touched. The quotation is the
+// load-bearing field in each: `ran` cannot be produced without executing the computation, and
+// `note_says` cannot be produced without opening the note. Without them a corrector returns
+// confident corrections that are wrong in a new way, and nothing downstream can tell.
+const VERIFIED = {
+  type: 'object',
+  required: ['ran', 'corrections'],
+  properties: {
+    ran: {
+      type: 'string',
+      description: 'the exact command you ran to recompute the example, as you ran it',
+    },
+    corrections: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['where', 'was', 'now'],
+        properties: {
+          where: { type: 'string', description: 'which value, in the article own words' },
+          was: { type: 'string', description: 'what the article said' },
+          now: { type: 'string', description: 'what your run produced' },
+        },
+      },
+    },
+  },
+}
+
+const CHECKED = {
+  type: 'object',
+  required: ['corrections'],
+  properties: {
+    corrections: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['claim', 'note_says', 'action'],
+        properties: {
+          claim: { type: 'string', description: 'the claim as the article made it, verbatim' },
+          note_says: { type: 'string', description: 'what the note actually says, verbatim' },
+          action: {
+            type: 'string',
+            enum: ['corrected', 'weakened', 'removed', 'marked_as_own'],
+          },
+        },
+      },
+    },
+  },
+}
+
 const WROTE = {
   type: 'object',
   required: ['written'],
@@ -526,6 +597,14 @@ let measuredProse = null
 // round's critics judge the NEW draft and will not repeat a remark they consider settled —
 // while an item nobody answered is settled by nobody.
 let carried = []
+// What the writer declined, with its reason, in the words it used. The critics get this: a
+// critic that never learns why a remark was declined raises it again next round, the writer
+// declines it again, and the pair burns a round agreeing to disagree. Three rounds of a live
+// run went exactly that way before the ledger existed to show it.
+let declinedNotes = []
+// The item texts of the previous round. When a round produces the same set, another round will
+// produce it too — the loop has stopped moving and the budget should not be spent proving it.
+let previousItems = null
 if (cfg.fresh) {
   log('[resume] config.fresh — всё пересобирается с нуля, ничего не переиспользуется')
 } else {
@@ -922,6 +1001,12 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
     if (declined.length) {
       log(`[write/${round}] отклонено с обоснованием: ${declined.length}`)
     }
+    // Kept in the writer's own wording, paired with the remark it answers, and handed to both
+    // critics below.
+    declinedNotes = declined.map((it) => {
+      const entry = [...answered.values()].find((a) => items[a.item - 1] === it)
+      return `[${it.source}] ${it.text}\n    → отклонено: ${entry ? entry.note : '(без причины)'}`
+    })
     // Carried forward by hand, because the critics of this round judge the NEW draft and will
     // not repeat a remark they consider settled. An item the writer never answered is not
     // settled by anybody.
@@ -932,6 +1017,71 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
     // supposed to act on. The `[CARRIED]` tag in the numbered list already says where it came
     // from, and it says it once.
     carried = [...unanswered, ...declined].map((it) => it.text)
+  }
+
+  // --- Correctors: fix what is decidable before anything judges it -------------------------
+  //
+  // A chain, not a fan-out: three agents edit the same file in turn, and turn is what makes it
+  // safe. Two runs writing one article concurrently already made a draft whose provenance could
+  // not be established.
+  //
+  // Order matters. Arithmetic first, because the fact checker may weaken a claim ABOUT a number
+  // and should see the number that survived. Both run before the gate, so the measurement the
+  // critics are told about is the measurement of the text that actually exists.
+  if (USE_CORRECTORS && !skipWriter) {
+    const verified = await agent(
+      task({
+        inputs: [
+          { port: 'draft', path: ARTICLE_PATH },
+          { port: 'brief', path: BRIEF_PATH },
+        ],
+        output: ARTICLE_PATH,
+      }),
+      {
+        agentType: 'example-verifier',
+        model: MODELS.verify,
+        label: `verify-example:${round}`,
+        phase: 'Write',
+        schema: VERIFIED,
+      },
+    )
+    if (verified) {
+      log(
+        `[example/${round}] пересчитано командой: ${verified.ran} | ` +
+          `исправлено чисел: ${verified.corrections.length}`,
+      )
+      for (const c of verified.corrections) {
+        log(`[example/${round}/число] ${c.where}: было ${c.was} → стало ${c.now}`)
+      }
+    } else {
+      log(`[example/${round}] ПРОВЕРЯЮЩИЙ АРИФМЕТИКУ НЕ ОТРАБОТАЛ — числа примера не сверены`)
+    }
+
+    const checked = await agent(
+      task({
+        inputs: [
+          { port: 'draft', path: ARTICLE_PATH },
+          { port: 'brief', path: BRIEF_PATH },
+          ...sourcePorts,
+        ],
+        output: ARTICLE_PATH,
+      }),
+      {
+        agentType: 'article-fact-checker',
+        model: MODELS.factcheck,
+        label: `factcheck:${round}`,
+        phase: 'Write',
+        schema: CHECKED,
+      },
+    )
+    if (checked) {
+      log(`[facts/${round}] исправлено утверждений: ${checked.corrections.length}`)
+      for (const c of checked.corrections) {
+        log(`[facts/${round}/${c.action}] «${c.claim}» | заметка: «${c.note_says}»`)
+      }
+    } else {
+      log(`[facts/${round}] СВЕРКА С ЗАМЕТКАМИ НЕ ОТРАБОТАЛА — атрибуция не проверена`)
+    }
   }
 
   // Measure before judging, so neither critic spends a remark on something already counted.
@@ -955,6 +1105,15 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
   for (const p of gateProblems) log(`[gate/${round}/problem] ${p}`)
 
   const lastRound = round === MAX_ROUNDS
+  // One paragraph, identical for both critics: the same facts about the same draft.
+  const declinedBlock = declinedNotes.length
+    ? `\n\nWHAT THE WRITER DECLINED, and why, from the previous round:\n` +
+      declinedNotes.map((d, i) => `${i + 1}. ${d}`).join('\n') +
+      `\n\nA declined remark is not settled — but it is not new either. If the reason holds, ` +
+      `let it go and do not raise it again; if it does not, say why the reason is wrong rather ` +
+      `than repeating the original remark. Repeating it unchanged costs a round and moves ` +
+      `nothing.`
+    : ''
   const criticInputs = [
     { port: 'brief', path: BRIEF_PATH },
     { port: 'draft', path: ARTICLE_PATH },
@@ -976,7 +1135,8 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
               : `The order set no length, so length is not a defect here.`) +
             ` Typography, rhythm and the author's voice belong to a style critic running` +
             ` beside you in this same round — leave them to it.` +
-            (lastRound ? ' This is the last revision round; there are no more.' : ''),
+            (lastRound ? ' This is the last revision round; there are no more.' : '') +
+            declinedBlock,
         }),
         {
           agentType: 'article-critic',
@@ -1001,7 +1161,8 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
             `${gateProblems.length ? gateProblems.join('; ') : 'nothing found'}.` +
             ` Confirm what it found by quoting it, and spend your own rounds on what a` +
             ` regex cannot reach — rhythm, address, terminology, the author's voice.` +
-            (lastRound ? ' This is the last revision round; there are no more.' : ''),
+            (lastRound ? ' This is the last revision round; there are no more.' : '') +
+            declinedBlock,
         }),
         {
           agentType: 'style-critic-ru',
@@ -1073,6 +1234,21 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
   // prose, one in the author's voice that explains the mechanism wrongly, and one both
   // critics like that overruns the brief are equally unfinished.
   if (verdict.verdict === 'ok' && styleOk && sizedReport.ok) break
+
+  // A round that produced the same set of items as the round before it has stopped moving, and
+  // the next one will produce it again. Six rounds of a live run cost five million tokens
+  // partly this way: the same five remarks came back word for word while the budget drained.
+  // Stopping here is not giving up — the items are recorded and reported either way; it is
+  // declining to pay for a third identical answer.
+  const signature = JSON.stringify(roundItems.slice().sort())
+  if (previousItems === signature) {
+    log(
+      `[write/${round}] ПЕТЛЯ НЕ ДВИЖЕТСЯ: набор замечаний совпал с предыдущим кругом ` +
+        `(${roundItems.length} пунктов). Дальше круги не помогут — останавливаемся и всё в отчёт.`,
+    )
+    break
+  }
+  previousItems = signature
 }
 
 // The loop may not have run at all — every round spent by earlier launches. The verdict then
@@ -1158,6 +1334,7 @@ return {
   unresolved: unresolvedPath,
   aspects: brief.aspects.map((a) => a.slug),
   sources_total: totalSources,
+  sources_reused_from_disk: reusedCount,
   rounds,
   verdict: verdict.verdict,
   style_verdict: styleVerdict ? styleVerdict.verdict : null,
