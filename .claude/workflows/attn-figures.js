@@ -57,9 +57,14 @@ const MANIFEST_PATH = `${FIGURES_DIR}/manifest.json`
 // The blog pair, not the conference one: `reference_sets_blog` holds the two etalon diagrams
 // the blog style guide was synthesised from, and pairing the guide with a different corpus
 // would pull the stylist and the retriever in two directions.
-const FIGGY = 'C:/Users/achirikalov/Documents/agents/figgybanana'
-const GUIDELINES = `${FIGGY}/data/guidelines/blog`
-const REFERENCE_SET = `${FIGGY}/data/reference_sets_blog`
+//
+// Where figgybanana lives is not written here. A workflow script has no access to the
+// environment, so the shell resolves it: `$FIGGYBANANA_HOME` if set, otherwise derived from
+// `$PAPERBANANA_BIN`, which already points inside that repository
+// (`…/figgybanana/.venv/Scripts/paperbanana.exe`). Hardcoding an absolute path would tie the
+// script to one machine and put a home directory into a public repository.
+const GUIDELINES = '$FIGGY/data/guidelines/blog'
+const REFERENCE_SET = '$FIGGY/data/reference_sets_blog'
 
 const PLAN = {
   type: 'object',
@@ -185,9 +190,12 @@ const ENV_BLOCK =
   `export WINROOT="$(pwd -W)"   # Windows-форма пути, POSIX-форма ломает PowerShell\n` +
   `export TMPDIR="$WINROOT/${WORK_DIR}/tmp" TEMP="$TMPDIR" TMP="$TMPDIR"\n` +
   `export KIMI_BASE_URL="https://api.kimi.com/coding/v1"\n` +
+  `FIGGY="\${FIGGYBANANA_HOME:-$(echo "$PAPERBANANA_BIN" | tr '\\\\\\\\' '/' | ` +
+  `sed 's#/[.]venv/Scripts/paperbanana.exe$##')}"\n` +
+  `test -d "$FIGGY/data" || { echo "не найден каталог figgybanana: $FIGGY"; exit 1; }\n` +
   `export GUIDELINES_PATH="${GUIDELINES}"\n` +
   `export REFERENCE_SET_PATH="${REFERENCE_SET}"\n` +
-  `echo "$TEMP"   # обязано начинаться с C:/ — если с /c/, дальше не иди, почини`
+  `echo "TEMP=$TEMP FIGGY=$FIGGY"   # TEMP обязан начинаться с C:/ — если с /c/, чини`
 
 const TOOL_RULES =
   `\n\nИНСТРУМЕНТ. Разрешай исполняемый файл в этом порядке и останавливайся на первом, ` +
