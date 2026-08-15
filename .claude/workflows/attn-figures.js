@@ -39,8 +39,15 @@ const run = typeof args === 'string' ? args : args && args.runDir
 if (!run) {
   throw new Error('a run directory is required: args.runDir, e.g. probe-runs/figures')
 }
-// The article to illustrate comes from a previous run; nothing here writes to it.
-const source = (args && args.articlePath) || 'probe-runs/attn3/article.md'
+// The article to illustrate comes from a previous run; nothing here writes to it. Required
+// rather than defaulted: the default used to name one particular old run, so a caller who
+// forgot the argument got figures drawn for somebody else's article and no error to say so.
+// A missing path is a question, and the script asks it instead of guessing.
+const source = args && args.articlePath
+if (!source) {
+  throw new Error('нужен путь к статье: args.articlePath — тот файл, к которому рисуем')
+}
+// A count, not a path: this one is a policy default and belongs here.
 const wanted = (args && args.figures) || 3
 const MAX_REDRAWS = 2
 
