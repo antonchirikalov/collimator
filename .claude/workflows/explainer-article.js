@@ -987,9 +987,30 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
 
   // No items, no revision block. Cleaner than keying off the round number: a resumed run whose
   // records held nothing open has nothing to say to the writer either.
+  // What was approved last round, named so it survives this one. Nine rounds of a live run
+  // alternated: substance ok / style revise, then substance revise / style ok, then back. Each
+  // round fixed one axis and disturbed the other, because the writer was handed the complaints
+  // and never the approvals — it had no way to know which half of the draft was finished.
+  //
+  // An approval is a constraint, not a compliment: it says where the edit must not reach.
+  const approved = []
+  if (verdict && verdict.verdict === 'ok') approved.push('SUBSTANCE')
+  if (STYLE_CRITIC && styleVerdict && styleVerdict.verdict === 'ok') approved.push('STYLE')
+  const approvedBlock = approved.length
+    ? `ALREADY APPROVED, and it has to stay approved: ${approved.join(' and ')}. The critic on ` +
+      `that axis passed the previous draft. Whatever you change now must leave it passing — ` +
+      `make the smallest edit that answers the items below, and where a fix would disturb an ` +
+      `approved axis, prefer the version that does not. The two axes have taken turns failing ` +
+      `for several rounds, each round repairing one and breaking the other; that is the thing ` +
+      `to stop.
+
+`
+    : ''
+
   const revision = !items.length
     ? null
     : budget +
+      approvedBlock +
         `REMARKS ON THE PREVIOUS DRAFT. ` +
         (verdict && verdict.verdict === 'ok'
           ? `The critic on substance passed it, so SUBSTANCE items are optional — take one only ` +
