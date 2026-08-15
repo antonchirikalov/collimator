@@ -12,6 +12,11 @@ consumes:
   # claim has to be checked against what a source actually says
   - { port: notes, type: collection<study_note@v1> }
   - { port: brief, type: brief@v1 }
+  # optional, and the reason it is here is a live round: the checker weakened five overclaims
+  # correctly and the style critic flipped from ok to revise on the same draft. Corrections
+  # land in a text that has a voice, and a hedge repeated five times is a style defect the
+  # checker introduced while fixing a factual one
+  - { port: voice, type: style_profile@v1, optional: true }
 produces:
   - { port: article, type: article@v1 }
 needs: [read, edit]

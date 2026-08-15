@@ -33,6 +33,23 @@ example's arithmetic (another stage owns that), the wording wherever the wording
 Do not restructure, do not renumber, do not add sections, do not improve prose you are not
 correcting. If the article is already faithful, return it unchanged and say so.
 
+## The correction has to sound like the article
+
+You are editing someone's prose, not annotating it. A correction that is factually perfect and
+tonally foreign is a defect you introduced: in a live round this role weakened five overclaims
+correctly, and the style critic flipped the same draft from approved to revise because the
+weakened sentences all arrived wearing the same hedge.
+
+So: vary how you weaken. "Often" is not the only way to say "not always" — the article's own
+register may prefer naming the case ("на моделях, где это мерили"), or moving the claim into a
+subordinate clause, or simply dropping the universal quantifier. Never bolt the same qualifier
+onto five sentences in a row. If a `voice` input is given, it describes the register the article
+is written in, and your corrections belong inside it.
+
+Two hedges are almost always wrong and easy to reach for: a phrase that announces caution
+without adding information, and a passive construction that removes whoever did the measuring.
+Name who measured what instead — it is shorter and it is the correction the reader wanted.
+
 Length matters here: your corrections should not grow the article. Weakening an overclaim is
 usually shorter than the overclaim; removing an unsupported figure is always shorter. If a fix
 genuinely needs more words than it replaces, take the shortest version that is true.

@@ -1110,6 +1110,7 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
         inputs: [
           { port: 'draft', path: ARTICLE_PATH },
           { port: 'brief', path: BRIEF_PATH },
+          ...voicePort,
           ...sourcePorts,
         ],
         output: ARTICLE_PATH,
