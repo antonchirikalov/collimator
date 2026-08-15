@@ -89,6 +89,9 @@ const roundPathOf = (n) => `${ROUNDS_DIR}/round-${n}.md`
 const cfg = (args && args.config) || {}
 
 const MAX_ROUNDS = cfg.maxRounds || 2
+// How many rounds may fail to beat the best result before the loop admits it has finished.
+// Two, because one bad round is noise and two in a row is a plateau.
+const PLATEAU_ROUNDS = cfg.plateauRounds || 2
 const MAX_ASPECTS = cfg.maxAspects || 4
 
 // A file that exists and holds 200 characters is a file an agent created and walked away
@@ -643,6 +646,20 @@ let declinedNotes = []
 // The item texts of the previous round. When a round produces the same set, another round will
 // produce it too — the loop has stopped moving and the budget should not be spent proving it.
 let previousItems = null
+// The fewest open items any round has managed, and how many rounds have failed to beat it.
+//
+// This exists because the obvious acceptance condition turned out to be unreachable. Requiring
+// both critics to find nothing in the SAME round, on a text of forty thousand characters, asks
+// two independent judges to fall silent simultaneously — and over eleven rounds of a live run
+// they never did. They alternated: substance ok / style revise, then the reverse, round after
+// round, while the total item count sat on a floor of eight to ten. Telling the writer which
+// axis was already approved did not stop it, because the problem was never the writer.
+//
+// So the loop also stops when it stops improving. What remains is recorded in UNRESOLVED.md and
+// handed to a person, which was always the designed outcome for remarks a round cannot close.
+let bestOpen = Infinity
+let bestRound = 0
+let sinceBest = 0
 if (cfg.fresh) {
   log('[resume] config.fresh — всё пересобирается с нуля, ничего не переиспользуется')
 } else {
@@ -1363,6 +1380,27 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
   // partly this way: the same five remarks came back word for word while the budget drained.
   // Stopping here is not giving up — the items are recorded and reported either way; it is
   // declining to pay for a third identical answer.
+  // Did this round beat the best any round has managed? The count is what the reader of
+  // UNRESOLVED.md will see, so it is the thing worth minimising.
+  if (roundItems.length < bestOpen) {
+    bestOpen = roundItems.length
+    bestRound = round
+    sinceBest = 0
+  } else {
+    sinceBest += 1
+    log(
+      `[write/${round}] не лучше достигнутого: ${roundItems.length} пунктов против ` +
+        `${bestOpen} на круге ${bestRound} (подряд без улучшения: ${sinceBest})`,
+    )
+    if (sinceBest >= PLATEAU_ROUNDS) {
+      log(
+        `[write/${round}] ПОЛКА: ${sinceBest} круга подряд не улучшили результат. Петля своё ` +
+          `отработала — остальное решает автор, и оно в отчёте.`,
+      )
+      break
+    }
+  }
+
   const signature = JSON.stringify(roundItems.slice().sort())
   if (previousItems === signature) {
     log(
@@ -1459,6 +1497,8 @@ return {
   sources_total: totalSources,
   sources_reused_from_disk: reusedCount,
   rounds,
+  best_round: bestRound,
+  best_open_items: bestOpen === Infinity ? null : bestOpen,
   verdict: verdict.verdict,
   style_verdict: styleVerdict ? styleVerdict.verdict : null,
   open_items: openItems.length,
