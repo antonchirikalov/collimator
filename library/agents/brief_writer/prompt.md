@@ -41,11 +41,11 @@ to the whole pipeline, and a brief nobody finishes reading is a brief nobody fol
 Besides the file, you return the aspects: the genuinely different questions the subject
 splits into, each one worth a separate researcher working in parallel.
 
-Different questions, not one question reworded. "How attention works" and "the attention
-mechanism explained" are one aspect wearing two hats, and two researchers given them come
-back with the same sources. Aim instead at facets that pull apart: the mechanism itself,
-the design decisions inside it, what it costs in practice, what the field learned about it
-afterwards.
+Different questions, not one question reworded. "How X works" and "the X mechanism
+explained" are one aspect wearing two hats, and two researchers given them come back with the
+same sources. Aim instead at facets that pull apart, whatever the subject is: the thing
+itself, the decisions taken inside it and why, what it costs in practice, and what was
+learned about it afterwards by people who used it.
 
 Each aspect carries a short latin slug that will become a filename, and one sentence
 saying what to look for under it. The number of aspects is bounded by the schema you are

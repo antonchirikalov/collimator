@@ -95,10 +95,34 @@ const MAX_ASPECTS = cfg.maxAspects || 4
 // from. Existence is therefore measured, not tested.
 const MIN_ARTIFACT_CHARS = cfg.minArtifactChars || 200
 
-// Language policy, not pipeline shape. `ru_slop` only matches Russian, so a pipeline writing
-// in English gains nothing from it and pays nothing for it; `no_bold` applies to any
-// language. A caller writing for a publication that wants bold passes ['ru_slop'].
-const GATE_PRESETS = cfg.gatePresets || ['ru_slop', 'no_bold']
+// --- Language policy: the two things that DO change with the language -----------------------
+//
+// The shape of this pipeline does not depend on what language the article is in. Two things
+// do: the style critic, which hunts the machine tells of a particular language, and the gate
+// presets, which hunt its dead phrases. Both were hardcoded to Russian, which is invisible
+// until someone orders an English article and gets a critic looking for «стоит отметить» and
+// «ёлочки» in it — reporting nothing, approving everything, and costing a stage.
+//
+// So the language chooses them, and the language comes from the brief, which got it from the
+// order. A language with no entry here gets `no_bold` (formatting, not vocabulary) and NO style
+// critic — and the absence is recorded as an open item rather than passed off as approval,
+// because "nobody checked" and "checked and fine" are the same thing only to a report nobody
+// reads.
+//
+// `cfg.gatePresets` and `cfg.styleCritic` still win when given: a caller who knows better than
+// the table says so directly.
+const LANGUAGE_POLICY = Object.assign(
+  {
+    russian: { styleCritic: 'style-critic-ru', gatePresets: ['ru_slop', 'no_bold'] },
+    'русский': { styleCritic: 'style-critic-ru', gatePresets: ['ru_slop', 'no_bold'] },
+  },
+  cfg.languagePolicy || {},
+)
+const DEFAULT_POLICY = { styleCritic: null, gatePresets: ['no_bold'] }
+
+// Assigned once the brief has been read. Until then nothing measures and nothing judges.
+let GATE_PRESETS = []
+let STYLE_CRITIC = null
 
 // The author's voice profile. `null` is a real answer, not a missing one: a pipeline writing
 // under someone else's byline supplies no voice and the writer falls back to the general
@@ -564,6 +588,20 @@ log(
     `aspects=${brief.aspects.length}`,
 )
 for (const a of brief.aspects) log(`[brief/aspect] ${a.slug}: ${a.question}`)
+
+const policy = LANGUAGE_POLICY[String(brief.language || '').toLowerCase()] || DEFAULT_POLICY
+GATE_PRESETS = cfg.gatePresets || policy.gatePresets
+STYLE_CRITIC = cfg.styleCritic === undefined ? policy.styleCritic : cfg.styleCritic
+log(
+  `[brief/policy] язык=${brief.language} наборы_гейта=${GATE_PRESETS.join(',') || 'нет'} ` +
+    `стилевой_критик=${STYLE_CRITIC || 'НЕТ ДЛЯ ЭТОГО ЯЗЫКА'}`,
+)
+if (!STYLE_CRITIC) {
+  log(
+    `[brief/policy] стиль судить некому: для языка «${brief.language}» критик не назван. ` +
+      `Это попадёт в незакрытые пункты, а не будет принято молча.`,
+  )
+}
 
 // --- Resume: the artifacts on disk are the checkpoint -----------------------------------------
 //
@@ -1176,31 +1214,33 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
         },
       ),
     () =>
-      agent(
-        task({
-          inputs: [
-            { port: 'draft', path: ARTICLE_PATH },
-            { port: 'brief', path: BRIEF_PATH },
-            ...voicePort,
-          ],
-          noFile: true,
-          extra:
-            `A deterministic gate has already run over this draft with the presets` +
-            ` ru_slop and no_bold, and reported: ` +
-            `${gateProblems.length ? gateProblems.join('; ') : 'nothing found'}.` +
-            ` Confirm what it found by quoting it, and spend your own rounds on what a` +
-            ` regex cannot reach — rhythm, address, terminology, the author's voice.` +
-            (lastRound ? ' This is the last revision round; there are no more.' : '') +
-            declinedBlock,
-        }),
-        {
-          agentType: 'style-critic-ru',
-          model: MODELS.style,
-          label: `style:${round}`,
-          phase: 'Write',
-          schema: STYLE_VERDICT,
-        },
-      ),
+      STYLE_CRITIC
+        ? agent(
+            task({
+              inputs: [
+                { port: 'draft', path: ARTICLE_PATH },
+                { port: 'brief', path: BRIEF_PATH },
+                ...voicePort,
+              ],
+              noFile: true,
+              extra:
+                `A deterministic gate has already run over this draft with the presets ` +
+                `${GATE_PRESETS.join(', ') || '(none)'}, and reported: ` +
+                `${gateProblems.length ? gateProblems.join('; ') : 'nothing found'}.` +
+                ` Confirm what it found by quoting it, and spend your own rounds on what a` +
+                ` regex cannot reach — rhythm, address, terminology, the author's voice.` +
+                (lastRound ? ' This is the last revision round; there are no more.' : '') +
+                declinedBlock,
+            }),
+            {
+              agentType: STYLE_CRITIC,
+              model: MODELS.style,
+              label: `style:${round}`,
+              phase: 'Write',
+              schema: STYLE_VERDICT,
+            },
+          )
+        : Promise.resolve(null),
   ])
 
   verdict = judged || noVerdict('the critic on substance')
@@ -1208,7 +1248,14 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
   for (const r of verdict.remarks) log(`[critic/${round}/remark] ${r}`)
 
   styleVerdict = styled || null
-  if (styled) {
+  if (!STYLE_CRITIC) {
+    // Not judged, and said so. The item goes on the record and into the report; what it must
+    // not do is block a loop that has no way to satisfy it.
+    styleRemarks = [
+      `стиль не проверен: для языка «${brief.language}» стилевой критик не назначен`,
+    ]
+    log(`[style/${round}] КРИТИКА ДЛЯ ЭТОГО ЯЗЫКА НЕТ — стиль не судился, пункт в отчёт`)
+  } else if (styled) {
     // A finding is stored as one line the writer can act on: quote, why, and what it should
     // say instead. The critic's own wording is kept verbatim and the joiners are punctuation
     // rather than words — the findings are Russian, this file is not, and a paraphrase here
@@ -1231,7 +1278,10 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
   // The round goes on the record before anything decides what to do with it. Written here
   // rather than at the end of the run on purpose: the point is to survive a process that dies
   // mid-loop, and a record written after the loop would die with it.
-  const styleOk = Boolean(styled) && styled.verdict === 'ok'
+  // With no critic for the language there is no style verdict to wait for. The absence is
+  // reported every round and lands in UNRESOLVED.md; it is not a reason to spend the whole
+  // round budget proving that nothing will change.
+  const styleOk = STYLE_CRITIC ? Boolean(styled) && styled.verdict === 'ok' : true
   const roundItems = [
     ...verdict.remarks,
     ...styleRemarks.map((r) => `Style: ${r}`),

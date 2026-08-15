@@ -76,6 +76,15 @@ function fill(schema, prompt) {
           out[key] = happy ? [] : ['max_prose 9000 exceeded (got 9263)']
           continue
         }
+        // A language, not the placeholder 'x'. A script may branch on it — which style critic
+        // to run, which gate presets to use — and a language nothing recognises sends every
+        // such branch down its "no policy for this" path, quietly leaving the main one
+        // untested. The value is a real language name for the same reason `measures` holds
+        // real numbers: the stub answers the shape AND the kind.
+        if (key === 'language') {
+          out[key] = happy ? 'Russian' : 'Klingon'
+          continue
+        }
         if (key === 'stdout') {
           out[key] = '{\n  "ok": true,\n  "problems": [],\n  "measures": {}\n}'
           continue

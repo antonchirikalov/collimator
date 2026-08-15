@@ -49,9 +49,10 @@ moves on. A gap is not a section.
   reads as a textbook chapter, and that is the commonest way an article of this kind comes
   out shallow.
 - **A number carries its consequence.** State a figure and say what follows from it in
-  the same breath. `h = 8, d_model = 512, d_k = 64` is a fact; "eight heads of 64 cost
-  about what one head of 512 costs — the width is the same, just sliced" is the sentence
-  a reader keeps.
+  the same breath. A configuration listed as three values is a fact and reads as furniture;
+  the same three values plus "which is why the whole thing costs about what one of them
+  would have cost alone" is the sentence a reader keeps. Every number in the article should
+  survive the question "and therefore?".
 - **What breaks if you do it naively.** Not mentioned — worked through. The reader has to
   leave with something they could do tomorrow by hand, not with a definition.
 
@@ -66,13 +67,14 @@ read as generated:
 
 - **No bold inside prose.** Emphasis comes from word order and sentence length. These
   instructions use bold; the article does not. The same goes for emoji — none. Watch for
-  the shape where a bold label opens a paragraph and stands in for a subheading
-  (`**QKᵀ.** Скалярное произведение…`) — deleting the asterisks is not the fix, the
+  the shape where a bold label opens a paragraph and stands in for a subheading — a term in
+  bold, a full stop, and then the explanation. Deleting the asterisks is not the fix: the
   paragraph needs a real transition or a real heading.
-- **The reader is in the text.** An explanation written entirely in the impersonal — «из
-  неё получают», «применяется построчно» — is correct and dead. Address the reader,
-  use a live actor, and never let five paragraphs pass with neither. This, not vocabulary,
-  is what separates an article from an encyclopedia entry.
+- **The reader is in the text.** An explanation written entirely in the impersonal — "one
+  obtains", "it is applied row-wise", and whatever that construction is in the article's own
+  language — is correct and dead. Address the reader, use a live actor, and never let five
+  paragraphs pass with neither. This, not vocabulary, is what separates an article from an
+  encyclopedia entry.
 - **Uneven rhythm.** Vary sentence length on purpose: a short practical statement, then a
   long explanation, then short again. A series of paragraphs of the same length and the
   same shape is the single most recognisable machine tell.
@@ -90,10 +92,11 @@ The article declares the figures it needs, and a later step draws them. For each
 put a placeholder exactly where it belongs in the text:
 
 ```
-![<caption, in the article's language>](figures/x-to-qkv.png)
+![<caption, in the article's language>](figures/<slug>.png)
 ```
 
-- The slug (`x-to-qkv`) becomes the filename — lowercase, hyphens, no spaces.
+- The slug becomes the filename — lowercase latin, hyphens, no spaces, named after what the
+  figure shows rather than after where it sits.
 - The caption states what the figure must communicate, not what it looks like. Someone
   drawing it reads only your caption and the surrounding paragraph.
 - Ask for a figure where a picture carries what prose carries badly: a shape, a flow, a
