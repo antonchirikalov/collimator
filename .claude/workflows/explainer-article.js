@@ -960,14 +960,34 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
   // On a genuine first pass there is nothing to report yet and no verdict to read: `verdict` is
   // still null there, and reaching into it is how the previous version of this list crashed two
   // of the three stub paths.
+  // Which axis passed last round. Read before the item list is built, because the list is
+  // what an approval actually changes.
+  const substanceApproved = Boolean(verdict && verdict.verdict === 'ok')
+  const styleApproved = Boolean(STYLE_CRITIC && styleVerdict && styleVerdict.verdict === 'ok')
+  const approved = []
+  if (substanceApproved) approved.push('SUBSTANCE')
+  if (styleApproved) approved.push('STYLE')
   const isFirstPass = round === 1 && startRound === 1
+  // Exactly one axis approved: this round works only on the other one. The approved axis is not
+  // just "please keep it" — its items are withheld entirely, so there is nothing to tempt a
+  // rewrite of prose that already passed. When both fail, or neither, the round is normal.
+  const singleAxis = substanceApproved !== styleApproved && !isFirstPass
+  if (singleAxis) {
+    log(
+      `[write/${round}] круг односторонний: ${substanceApproved ? 'существо принято, правим только стиль' : 'стиль принят, правим только существо'}`,
+    )
+  }
   const items = isFirstPass
     ? []
     : [
         ...carried.map((text) => ({ source: 'CARRIED', text })),
         ...gateProblems.map((text) => ({ source: 'GATE', text })),
-        ...((verdict && verdict.remarks) || []).map((text) => ({ source: 'SUBSTANCE', text })),
-        ...styleRemarks.map((text) => ({ source: 'STYLE', text })),
+        ...(singleAxis && substanceApproved
+          ? []
+          : ((verdict && verdict.remarks) || []).map((text) => ({ source: 'SUBSTANCE', text }))),
+        ...(singleAxis && styleApproved
+          ? []
+          : styleRemarks.map((text) => ({ source: 'STYLE', text }))),
       ]
 
   // Five remarks came back word for word identical in rounds 4 and 5 of a live run — same
@@ -993,11 +1013,13 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
   // and never the approvals — it had no way to know which half of the draft was finished.
   //
   // An approval is a constraint, not a compliment: it says where the edit must not reach.
-  const approved = []
-  if (verdict && verdict.verdict === 'ok') approved.push('SUBSTANCE')
-  if (STYLE_CRITIC && styleVerdict && styleVerdict.verdict === 'ok') approved.push('STYLE')
   const approvedBlock = approved.length
-    ? `ALREADY APPROVED, and it has to stay approved: ${approved.join(' and ')}. The critic on ` +
+    ? (singleAxis
+        ? `THIS IS A SINGLE-AXIS ROUND. ${substanceApproved ? 'The substance is approved and frozen: change no claim, no number, no attribution, no section, and add nothing. Every edit below is to the prose only.' : 'The prose is approved and frozen: fix the substance with the smallest edits that do it, and leave sentences you are not correcting exactly as they stand.'} A fix that cannot be made without touching the frozen half is declined with that as the reason.
+
+`
+        : '') +
+      `ALREADY APPROVED, and it has to stay approved: ${approved.join(' and ')}. The critic on ` +
       `that axis passed the previous draft. Whatever you change now must leave it passing — ` +
       `make the smallest edit that answers the items below, and where a fix would disturb an ` +
       `approved axis, prefer the version that does not. The two axes have taken turns failing ` +
