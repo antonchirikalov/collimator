@@ -59,6 +59,12 @@ const order = (args && args.brief) || ''
 if (!order.trim()) {
   throw new Error('an order is required: args.brief — subject, length and wishes in one line')
 }
+// The clock, for the one question that needs one: is another run working in this directory.
+// The script has no `Date.now()` — the runtime removes it, or resuming would break — so the
+// time arrives from outside, the same way the run directory does. Optional: without it the
+// check is skipped and said to be skipped, because "nobody looked" and "looked, all clear"
+// must not read the same.
+const now = (args && args.now) || ''
 
 // Every path is named here, by the script, and nowhere else. Agents receive paths and never
 // report them back: a `path` field in a schema turns "say where it is" into a substitute for
@@ -216,6 +222,7 @@ const GATE_TOOL = cfg.gateTool || 'python -X utf8 tools/gate.py'
 const ROUNDS_TOOL = cfg.roundsTool || 'python -X utf8 tools/rounds.py'
 const LISTING_TOOL = cfg.listingTool || 'python -X utf8 tools/listing.py'
 const SNAPSHOT_TOOL = cfg.snapshotTool || 'python -X utf8 tools/snapshot.py'
+const BUSY_TOOL = cfg.busyTool || 'python -X utf8 tools/busy.py'
 
 // The two correctors between the writer and the critics. On by default and switchable off,
 // because a pipeline whose documents carry no arithmetic and no citations pays for them for
@@ -651,6 +658,26 @@ const EXISTENCE = {
   },
 }
 
+// The occupancy answer. `busy` is its own field rather than a reading of `ok`, because the two
+// differ: a log with one unreadable timestamp is not ok and says nothing about who is working.
+const BUSY = {
+  type: 'object',
+  required: ['checks'],
+  properties: {
+    checks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['busy', 'problems'],
+        properties: {
+          busy: { type: 'boolean', description: 'the busy field of the report, verbatim' },
+          problems: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    },
+  },
+}
+
 // --- Measurement: python counts, an agent carries, the script decides -------------------------
 //
 // The script has no shell, so it cannot run the gate itself; the agent exists only to carry the
@@ -881,6 +908,51 @@ let previousItems = null
 let bestOpen = Infinity
 let bestRound = 0
 let sinceBest = 0
+
+// --- Is anybody else working here ------------------------------------------------------------
+//
+// Asked before anything is spent, and asked of the disk rather than of memory. Two runs pointed
+// at one directory is the most expensive mistake this pipeline has made: one rewrote the other's
+// analysis while the first's writer was reading it, and which version reached the article can no
+// longer be established. The rake was already written down, and writing it down did not help —
+// "is a run going" was not observable, and a quiet tool log looks exactly like a finished one.
+// Source finders are quiet for minutes at a time and call no tools at all.
+//
+// The tool answers it from the log's own timestamps. Skipping is allowed and is never silent:
+// a run launched without a clock says so and carries it into the record.
+if (!now) {
+  warnings.push(
+    'не проверено, идёт ли по каталогу другой прогон: args.now не передан — ' +
+      'два прогона на одном каталоге делают провенанс черновика недоказуемым',
+  )
+  log('[busy] args.now не передан — занятость каталога НЕ проверялась')
+} else {
+  phase('Resume')
+  const occupied = await call(
+    commands([
+      `${BUSY_TOOL} --file ${TOOLS_LOG} --now ${now}` +
+        ` --idle-seconds ${cfg.idleSeconds || 600} ${noted('is another run working here')}`,
+    ]),
+    { agentType: 'gate-runner', model: MODELS.gate, label: 'busy', phase: 'Resume', schema: BUSY },
+  )
+  const verdict = occupied && occupied.checks && occupied.checks[0]
+  if (!verdict) {
+    log('[busy] проверка не вернулась — занятость каталога осталась невыясненной')
+    warnings.push('проверка занятости каталога не вернулась: ответ неизвестен')
+  } else if (verdict.busy && !cfg.ignoreBusy) {
+    throw new Error(
+      `по каталогу ${run} похоже идёт другой прогон: ${verdict.problems.join('; ')}. ` +
+        `Новый прогон — новый каталог: python -X utf8 tools/newrun.py --base docs-runs --label <о чём>. ` +
+        `Если тот прогон точно мёртв — config.ignoreBusy=true.`,
+    )
+  } else if (verdict.busy) {
+    log(`[busy] каталог занят, но config.ignoreBusy — идём дальше: ${verdict.problems.join('; ')}`)
+    warnings.push(`каталог был занят, прогон начат поверх по config.ignoreBusy`)
+  } else {
+    log('[busy] каталог свободен')
+  }
+}
+
 if (cfg.fresh) {
   log('[resume] config.fresh — всё пересобирается с нуля, ничего не переиспользуется')
 } else {
@@ -1281,6 +1353,72 @@ if (materialCheck && !materialCheck.ok) {
   }
   if (!rechecked.length || rechecked.some((c) => !c.ok)) {
     log('[verify/2] STILL NO MATERIAL — the writer goes without it, and that is in the report')
+  }
+}
+
+// --- The analysis exists. Is there work under its headings ------------------------------------
+//
+// A floor on length answers "did the agent write anything" and misses what actually happens: the
+// analyst writes the SHAPE of the artifact — every heading the contract asks for, in order — and
+// fills it aspect by aspect over many passes. Caught live at 1 748 bytes of headings alone, and
+// again at 68 KB with three of six aspects still hollow. Either would pass a floor, and the
+// writer would build those sections of the article on nothing.
+//
+// The empty headings are named back to the analyst rather than the whole job being redone: it
+// has Edit, and the ones already filled cost too much to throw away.
+if (present.has(MATERIAL_PATH) || analysis) {
+  const structure = await call(
+    commands([
+      `${GATE_TOOL} --file ${MATERIAL_PATH} --no-empty-sections ${noted('is there work under every heading')}`,
+    ]),
+    {
+      agentType: 'gate-runner',
+      model: MODELS.gate,
+      label: 'verify:structure',
+      phase: 'Verify',
+      schema: EXISTENCE,
+    },
+  )
+  const hollow = structure && structure.checks && structure.checks[0]
+  if (!hollow) {
+    log('[verify/структура] проверка не вернулась — наполненность разбора неизвестна')
+    warnings.push('не проверено, есть ли работа под заголовками разбора')
+  } else if (!hollow.ok) {
+    log(`[verify/структура] РАЗБОР С ПУСТЫМИ РАЗДЕЛАМИ: ${hollow.problems.join('; ')}`)
+    analysis = await call(
+      `The analysis on disk has headings with nothing under them: ${hollow.problems.join('; ')}\n` +
+        `Fill exactly those, in place, leaving everything already written as it is.\n\n` +
+        analyseTask,
+      {
+        agentType: 'domain-analyst',
+        model: MODELS.analyse,
+        label: 'analyse:fill',
+        phase: 'Verify',
+        schema: ANALYSIS,
+      },
+    )
+    const refilled = await call(
+      commands([
+        `${GATE_TOOL} --file ${MATERIAL_PATH} --no-empty-sections ${noted('are the headings filled now')}`,
+      ]),
+      {
+        agentType: 'gate-runner',
+        model: MODELS.gate,
+        label: 'verify:structure/2',
+        phase: 'Verify',
+        schema: EXISTENCE,
+      },
+    )
+    const after = refilled && refilled.checks && refilled.checks[0]
+    if (!after || !after.ok) {
+      const left = after ? after.problems.join('; ') : 'проверка не вернулась'
+      log(`[verify/структура] ВСЁ ЕЩЁ ПУСТО: ${left}`)
+      warnings.push(`разбор ушёл писателю с пустыми разделами: ${left}`)
+    } else {
+      log('[verify/структура] разделы наполнены')
+    }
+  } else {
+    log('[verify/структура] под каждым заголовком есть работа')
   }
 }
 

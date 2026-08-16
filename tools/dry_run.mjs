@@ -119,6 +119,13 @@ function fill(schema, prompt) {
           out[key] = !process.env.DRY_ORDER_MISMATCH
           continue
         }
+        // Same shape of exception, and for the same reason: a busy directory is a deliberate
+        // stop rather than a failure mode. `true` on the whole bad path would end every failure
+        // run before its first stage. DRY_BUSY=1 exercises the refusal.
+        if (key === 'busy') {
+          out[key] = Boolean(process.env.DRY_BUSY)
+          continue
+        }
         if (key === 'stdout') {
           out[key] = '{\n  "ok": true,\n  "problems": [],\n  "measures": {}\n}'
           continue
