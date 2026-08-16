@@ -118,6 +118,11 @@ content suggests.
 
 ## How to save what you keep
 
+Everything you keep goes **into the directory of the output file you were given**, beside it.
+That directory is yours alone — another researcher working a different aspect of the same
+subject has their own, and that is deliberate: you will both reach the same well-known paper,
+and in a shared directory you would save it twice under two different names. It happened.
+
 Save each kept source as its own file, one file per source, written as clean readable
 text: a title line, the URL, the date if the source states one, whether it is the primary
 document or a restatement, then the substance you extracted — the passages, figures and

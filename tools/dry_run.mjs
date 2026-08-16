@@ -24,6 +24,13 @@ const happy = mode !== 'bad'
 
 const source = readFileSync(target, 'utf8').replace(/^export\s+const\s+meta/m, 'const meta')
 
+// How many commands the prompt listed. The carrying agent's contract is one result per command,
+// in order, so a stub that returns a different count exercises the mismatch branch instead of
+// the real one.
+function commandCount(prompt) {
+  return [...prompt.matchAll(/^\s*\d+\.\s+\S/gm)].length
+}
+
 // Two shapes, because a script may hand a carrying agent either a bare list of paths or the
 // commands that measure them. The second shape appeared when the inline gate prompt became the
 // gate_runner agent: the paths moved inside `--file <path>`, the bare-list pattern stopped
@@ -60,6 +67,17 @@ function fill(schema, prompt) {
         // reuse branch it is supposed to cover goes untested. That happened: the schema stopped
         // carrying a `path` field (deliberately — the script must not ask for paths back), the
         // old code keyed its special case off that field, and the count silently became 1.
+        // A `listings` array gets one entry per command, for the same reason `checks` does: the
+        // script matches results to commands BY INDEX. A stub returning one entry for several
+        // commands exercises only the mismatch branch and leaves the real one untested.
+        if (key === 'listings' && sub && sub.type === 'array') {
+          const n = Math.max(commandCount(prompt), 1)
+          out[key] = Array.from({ length: n }, (_, i) => ({
+            ...fill(sub.items ?? {}, prompt),
+            files: happy ? [`dry/run/sources/x/source-${i + 1}.md`] : [],
+          }))
+          continue
+        }
         if (key === 'checks' && sub && sub.type === 'array') {
           const item = sub.items ?? {}
           const paths = pathsFromPrompt(prompt)

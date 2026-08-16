@@ -67,7 +67,14 @@ const BRIEF_PATH = `${run}/brief.md`
 const MATERIAL_PATH = `${run}/material.md`
 const ARTICLE_PATH = `${run}/article.md`
 const UNRESOLVED_PATH = `${run}/UNRESOLVED.md`
-const sourcePathOf = (slug) => `${run}/sources/${slug}.md`
+// One directory per researcher, not one shared pile. Two finders working different aspects of
+// the same subject reach the same paper often, and in a shared directory they named it twice:
+// `annotated-transformer-maskirovanie-kod.md` and `annotated-transformer-scaling-masking-code.md`
+// are one source saved by two agents. A directory each makes a collision impossible, makes it
+// obvious which aspect produced what, and lets the script enumerate per aspect rather than
+// sorting one heap by guesswork.
+const sourceDirOf = (slug) => `${run}/sources/${slug}`
+const sourcePathOf = (slug) => `${sourceDirOf(slug)}/${slug}.md`
 // One file per revision round. The article survives a restart because an agent wrote it; the
 // verdicts on it did not, because they lived only in what an agent returned. So each round is
 // recorded, and a run that comes back does not pay two opus critics to re-judge a draft they
@@ -119,7 +126,12 @@ const MAX_ROUNDS = cfg.maxRounds || 2
 // How many rounds may fail to beat the best result before the loop admits it has finished.
 // Two, because one bad round is noise and two in a row is a plateau.
 const PLATEAU_ROUNDS = cfg.plateauRounds || 2
-const MAX_ASPECTS = cfg.maxAspects || 4
+// Six, not four. Four was a number I picked and never justified, and on a large subject it is
+// thin: an aspect is a whole researcher, and a technical design has more than four areas worth
+// a researcher each. The platform runs sixteen agents at once, so the ceiling is not the
+// machinery — it is whether the aspects are genuinely different questions. Two that are one
+// question reworded send two agents at the same pages.
+const MAX_ASPECTS = cfg.maxAspects || 6
 
 // A file that exists and holds 200 characters is a file an agent created and walked away
 // from. Existence is therefore measured, not tested.
@@ -519,12 +531,23 @@ const ROUNDS = {
 // to: a `path` field in a schema turns "say where it is" into a substitute for "put it there".
 // What listing.py prints. The script names every path it writes; this reports the paths it
 // could not have named — the per-source files the finder keeps on its own judgement.
-const LISTING = {
+// One listing per command, in the order the commands were given. Matched by index, like every
+// other result that comes back from the carrying agent.
+const LISTINGS = {
   type: 'object',
-  required: ['report', 'files'],
+  required: ['listings'],
   properties: {
-    report: REPORT,
-    files: { type: 'array', items: { type: 'string' } },
+    listings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['ok', 'files'],
+        properties: {
+          ok: { type: 'boolean' },
+          files: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    },
   },
 }
 
@@ -863,30 +886,44 @@ const sourcePorts = found.map((f) => ({ port: `sources:${f.aspect.slug}`, path: 
 // Enumerating is not asking an agent where it put something: the script still names every path
 // it writes. This only reports what is there, so the stages that need primary material get it.
 let allSourcePorts = sourcePorts
-if (sourcePaths.length) {
+if (found.length) {
+  // One command per aspect directory, in the order the script listed them — the same index rule
+  // as everywhere else. The summary file is excluded because it is already a port above.
   const listed = await agent(
-    commands([`${LISTING_TOOL} --dir ${run}/sources --ext .md`]),
+    commands(
+      found.map(
+        (f) =>
+          `${LISTING_TOOL} --dir ${sourceDirOf(f.aspect.slug)} --ext .md ` +
+          `--exclude ${f.aspect.slug}.md`,
+      ),
+    ),
     {
       agentType: 'gate-runner',
       model: MODELS.gate,
       label: 'sources:list',
       phase: 'Research',
-      schema: LISTING,
+      schema: LISTINGS,
     },
   )
-  const files = (listed && listed.files) || []
-  if (!files.length) {
-    log('[sources] перечислить каталог не удалось — дальше идут только файлы по аспектам')
-  } else {
-    const aspectFiles = new Set(sourcePaths)
-    const extra = files.filter((f) => !aspectFiles.has(f))
-    allSourcePorts = [
-      ...sourcePorts,
-      ...extra.map((path) => ({ port: `source:${path.split('/').pop().replace(/\.md$/, '')}`, path })),
-    ]
+  const perAspect = (listed && listed.listings) || []
+  if (perAspect.length !== found.length) {
     log(
-      `[sources] на диске ${files.length} файлов: по аспектам ${sourcePaths.length}, ` +
-        `по источникам ${extra.length} — все уходят аналитику и сверяющему`,
+      `[sources] перечислений ${perAspect.length} на ${found.length} каталогов — ` +
+        `сопоставить нельзя, дальше идут только сводки по аспектам`,
+    )
+  } else {
+    const extra = []
+    found.forEach((f, i) => {
+      const files = perAspect[i].files || []
+      log(`[sources/${f.aspect.slug}] источников в каталоге: ${files.length}`)
+      for (const path of files) {
+        extra.push({ port: `source:${f.aspect.slug}/${path.split('/').pop().replace(/\.md$/, '')}`, path })
+      }
+    })
+    allSourcePorts = [...sourcePorts, ...extra]
+    log(
+      `[sources] всего ${sourcePorts.length} сводок и ${extra.length} источников — ` +
+        `все уходят аналитику и сверяющему`,
     )
   }
 }
