@@ -283,6 +283,14 @@ const touched = new Set()
 const handoff = []
 let lastPorts = null
 
+// Things that did not stop the run but change how its result must be read: an aspect nobody
+// found sources for, a listing that could not be matched. `log()` alone is not enough for these
+// — it lives in the run transcript, and the run transcript is exactly what is gone by the time
+// someone asks why one section of the article is thinner than the rest. They go on disk with
+// the handoff record.
+const warnings = []
+const emptyAspects = []
+
 async function call(taskText, opts) {
   handoff.push({
     label: opts.label,
@@ -713,6 +721,7 @@ async function recordHandoff() {
     const out = h.output || '(файла нет, только схема)'
     return `${h.label} [${h.agent}, ${h.model}] ВХОД: ${ins} ВЫХОД: ${out}`
   })
+  for (const w of warnings) lines.push(`ПРЕДУПРЕЖДЕНИЕ: ${w}`)
   touched.add(HANDOFF_PATH)
   const wrote = await call(
     record(HANDOFF_PATH, `Передачи между агентами, вызовов: ${lines.length}`, lines),
@@ -1085,7 +1094,10 @@ if (found.length) {
     commands(
       found.map(
         (f) =>
-          `${LISTING_TOOL} --dir ${sourceDirOf(f.aspect.slug)} --ext .md ` +
+          // Everything, not only `.md`: the index is a `.json`, and a listing filtered to
+          // markdown cannot say whether it is there. Anything else the finder kept shows up
+          // here too, which is the point of enumerating rather than assuming.
+          `${LISTING_TOOL} --dir ${sourceDirOf(f.aspect.slug)} --ext "" ` +
           `--exclude ${f.aspect.slug}.md ${noted('what finder ' + f.aspect.slug + ' brought back')}`,
       ),
     ),
@@ -1099,6 +1111,10 @@ if (found.length) {
   )
   const perAspect = (listed && listed.listings) || []
   if (perAspect.length !== found.length) {
+    warnings.push(
+      `перечислений ${perAspect.length} на ${found.length} каталогов: ` +
+        `первичные источники до аналитика и сверяющего не дошли`,
+    )
     log(
       `[sources] перечислений ${perAspect.length} на ${found.length} каталогов — ` +
         `сопоставить нельзя, дальше идут только сводки по аспектам`,
@@ -1107,17 +1123,30 @@ if (found.length) {
     const extra = []
     found.forEach((f, i) => {
       const files = perAspect[i].files || []
-      log(`[sources/${f.aspect.slug}] источников в каталоге: ${files.length}`)
-      for (const path of files) {
+      // The finder's own index — which file came from which URL, and whether the source is
+      // primary or someone's retelling of it. It was written on every run and read by nobody:
+      // provenance the analyst and the fact checker both want, sitting one directory away.
+      // A port is only made for what the listing actually saw, because handing an agent a path
+      // to a file nobody wrote is handing it a question it cannot answer.
+      const indexes = files.filter((p) => p.endsWith('.json'))
+      const sources = files.filter((p) => !p.endsWith('.json'))
+      if (!sources.length) {
+        // The aspect stays in the pipeline — the finder's own summary is still a port — but the
+        // section built on it rests on one unsourced retelling, and that has to be visible while
+        // the run is watched rather than discovered in the article afterwards.
+        emptyAspects.push(f.aspect.slug)
+      }
+      log(
+        `[sources/${f.aspect.slug}] источников в каталоге: ${sources.length}` +
+          (indexes.length ? '' : ', указателя нет') +
+          (sources.length ? '' : ' — раздел останется на одной сводке искателя'),
+      )
+      for (const path of sources) {
         extra.push({ port: `source:${f.aspect.slug}/${path.split('/').pop().replace(/\.md$/, '')}`, path })
       }
-      // The finder's own index: which file came from which URL, and whether the source is
-      // primary or someone's retelling of it. It was written on every run and read by nobody —
-      // provenance the analyst and the fact checker both want, sitting one directory away.
-      extra.push({
-        port: `index:${f.aspect.slug}`,
-        path: `${sourceDirOf(f.aspect.slug)}/_index.json`,
-      })
+      for (const path of indexes) {
+        extra.push({ port: `index:${f.aspect.slug}`, path })
+      }
     })
     allSourcePorts = [...sourcePorts, ...extra]
     log(
@@ -1125,6 +1154,13 @@ if (found.length) {
         `все уходят аналитику и сверяющему`,
     )
   }
+}
+if (emptyAspects.length) {
+  warnings.push(
+    `аспекты без единого источника: ${emptyAspects.join(', ')} — ` +
+      `эти разделы стоят на сводке искателя и ничем не подтверждены`,
+  )
+  log(`[sources] БЕЗ ИСТОЧНИКОВ: ${emptyAspects.join(', ')} — проверить эти разделы отдельно`)
 }
 const totalSources = found.reduce((sum, f) => sum + f.sources.length, 0)
 const reusedCount = found.filter((f) => f.reused).length

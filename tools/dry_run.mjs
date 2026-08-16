@@ -78,7 +78,11 @@ function fill(schema, prompt) {
           const n = Math.max(commandCount(prompt), 1)
           out[key] = Array.from({ length: n }, (_, i) => ({
             ...fill(sub.items ?? {}, prompt),
-            files: happy ? [`dry/run/sources/x/source-${i + 1}.md`] : [],
+            // The index is a `.json` and the sources are `.md`: the script splits the listing by
+            // suffix, so a stub of markdown alone would leave the index branch untested.
+            files: happy
+              ? [`dry/run/sources/x/source-${i + 1}.md`, `dry/run/sources/x/_index.json`]
+              : [],
           }))
           continue
         }
