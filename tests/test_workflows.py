@@ -162,3 +162,17 @@ def test_voice_profile_default_exists() -> None:
     match = re.search(r"cfg\.voicePath === undefined \? '([^']+)'", script)
     assert match, "умолчание voicePath не найдено — тест устарел вместе со скриптом"
     assert (ROOT / match.group(1)).is_file(), f"нет файла профиля голоса: {match.group(1)}"
+
+
+@pytest.mark.parametrize("script", sorted(p.name for p in WORKFLOWS.glob("*.js")))
+def test_tool_arguments_are_ascii(script: str) -> None:
+    """Всё, что уходит инструменту аргументом, — ASCII; кириллица ходит только файлом.
+
+    Кириллица через argv на Windows зависит от кодовой страницы и от того, какой шелл выбрал
+    агент-носитель. Ради этого запреты уехали из кода в файлы — а следом я поставил по-русски
+    пометки вызовов `--log-note`, тот же argv и та же зависимость. Проверяется то, что можно
+    проверить механически: одинарные строки и шаблоны внутри вызова `noted(...)`.
+    """
+    text = (WORKFLOWS / script).read_text(encoding="utf-8")
+    bad = [n for n in re.findall(r"noted\((.*?)\)", text) if re.search("[а-яА-ЯёЁ]", n)]
+    assert not bad, f"{script}: кириллица в аргументе инструмента: {bad}"
