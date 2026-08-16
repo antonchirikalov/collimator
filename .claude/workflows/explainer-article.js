@@ -845,7 +845,19 @@ for (let i = 0; i < brief.aspects.length; i++) {
   const aspect = brief.aspects[i]
   const path = sourcePathOf(aspect.slug)
   if (!result) {
-    log(`[research/${aspect.slug}] the agent returned nothing`)
+    // A finder that died is not a finder that produced nothing. It writes as it goes — a file
+    // per source it keeps, and the summary last — so an agent killed by a session limit after
+    // reading five papers leaves five files on disk and no return value. Dropping the aspect
+    // here dropped those files too: the enumeration below runs over `found`, so a directory
+    // nobody listed is a directory nobody reads.
+    //
+    // So the aspect stays, marked, and the disk decides what survived. The verification stage
+    // measures the summary and says loudly if it is missing.
+    found.push({ aspect, path, sources: [], reused: false, failed: true })
+    log(
+      `[research/${aspect.slug}] АГЕНТ НЕ ВЕРНУЛ РЕЗУЛЬТАТ — ` +
+        `что успел записать, подберёт перечисление, а сводку проверит диск`,
+    )
     continue
   }
   // A reused file has no list of titles to report: that list lived in the return value of an
@@ -868,9 +880,21 @@ for (let i = 0; i < brief.aspects.length; i++) {
   )
   for (const s of result.sources) log(`[research/source] ${s.title} — ${s.url}`)
 }
-if (found.length === 0) throw new Error('not one source finder returned anything')
+// `found` now holds failed aspects too, so counting it is no longer the question. The question
+// is whether anything at all can be read, and that is answered by at least one aspect having
+// either returned or been reused from disk.
+if (!found.some((f) => !f.failed)) {
+  throw new Error('ни один источниковед не отработал и ничего не переиспользовано')
+}
 
-const sourcePorts = found.map((f) => ({ port: `sources:${f.aspect.slug}`, path: f.path }))
+// A port only for the summaries a finder actually finished. A dead finder's aspect stays in
+// `found` so its directory gets enumerated below — that is where its rescued sources come from —
+// but handing an agent a port to a file that was never written is handing it a question it
+// cannot answer. The two lists are deliberately different: one is "what exists to read", the
+// other is "everything to look inside".
+const sourcePorts = found
+  .filter((f) => !f.failed)
+  .map((f) => ({ port: `sources:${f.aspect.slug}`, path: f.path }))
 
 // --- Everything the finders actually kept -----------------------------------------------------
 //
@@ -995,6 +1019,8 @@ let existence = nothingRan
 if (nothingRan) {
   log('[verify] ничего не запускалось, всё переиспользовано — проверка диска не повторяется')
 }
+// Every aspect, including the ones whose finder died: the point of this stage is to say what is
+// missing, and the aspect most likely to be missing is exactly the one nobody heard back from.
 const verifyPaths = [...found.map((f) => f.path), MATERIAL_PATH]
 existence.checks.forEach((c, i) => {
   log(
