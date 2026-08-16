@@ -24,14 +24,33 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-LOG = REPO / "probe-runs" / "stop-audit.jsonl"
+# Where the record goes. `probe-runs/` was wrong twice over: it is one particular run directory
+# rather than a place for logs, and the run directory convention has since moved to a fresh one
+# per experiment. `COLLIMATOR_STOP_AUDIT` overrides it for anyone vendoring this elsewhere.
+LOG = Path(os.environ.get("COLLIMATOR_STOP_AUDIT") or REPO / "logs" / "stop-audit.jsonl")
 MSYS_DRIVE = re.compile(r"^/([A-Za-z])(?=/|$)")
 WRITING_TOOLS = frozenset({"Write", "Edit", "NotebookEdit"})
+
+
+def relative(path: Path) -> str:
+    """Repo-relative posix form when the file is inside the repository, absolute otherwise.
+
+    Absolute Windows paths with backslashes made the log machine-specific and unfilterable: the
+    one question worth asking of it — "what did the agents of THIS run write" — is a plain string
+    match against the run directory, and a drive-letter path with backslashes does not match
+    `docs-runs/x`. Same rule as everywhere else here: relative, forward slashes.
+    """
+    resolved = resolve(path)
+    try:
+        return resolved.resolve().relative_to(REPO).as_posix()
+    except ValueError:
+        return resolved.as_posix()
 
 
 def resolve(path: Path) -> Path:
@@ -85,9 +104,9 @@ def audit(payload: dict[str, object]) -> dict[str, object]:
         record["verdict"] = "no_writes"
         return record
 
-    missing = [p for p in paths if not resolve(Path(p)).exists()]
+    missing = [relative(Path(p)) for p in paths if not resolve(Path(p)).exists()]
     record["wrote"] = len(paths)
-    record["files"] = paths
+    record["files"] = [relative(Path(p)) for p in paths]
     if missing:
         record["verdict"] = "MISSING_AFTER_WRITE"
         record["missing"] = missing

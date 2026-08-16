@@ -52,7 +52,7 @@ def test_written_file_that_exists(tmp_path: Path) -> None:
     record = stop_audit.audit({"agent_type": "domain-analyst", "agent_transcript_path": str(t)})
     assert record["verdict"] == "ok"
     assert record["wrote"] == 1
-    assert record["files"] == [str(target)]
+    assert record["files"] == [Path(target).as_posix()]
 
 
 def test_written_file_that_vanished(tmp_path: Path) -> None:
@@ -61,7 +61,7 @@ def test_written_file_that_vanished(tmp_path: Path) -> None:
     t = transcript(tmp_path, [("Write", str(target))])
     record = stop_audit.audit({"agent_type": "domain-analyst", "agent_transcript_path": str(t)})
     assert record["verdict"] == "MISSING_AFTER_WRITE"
-    assert record["missing"] == [str(target)]
+    assert record["missing"] == [Path(target).as_posix()]
 
 
 def test_edit_counts_as_writing(tmp_path: Path) -> None:
@@ -133,3 +133,33 @@ def test_garbage_on_stdin_does_not_break_the_run(
     monkeypatch.setattr(stop_audit, "LOG", tmp_path / "stop-audit.jsonl")
     monkeypatch.setattr(sys, "stdin", __import__("io").StringIO("{не json"))
     assert stop_audit.main() == 0
+
+
+# --- форма пути в записи --------------------------------------------------------------
+#
+# Единственный вопрос, который к этому журналу задают, — «что записали агенты ЭТОГО прогона»,
+# и это обычное совпадение подстроки с каталогом прогона. Абсолютный путь с обратными слешами
+# на такое не отвечает и делает журнал привязанным к машине.
+
+
+def test_path_inside_the_repo_is_recorded_relative() -> None:
+    inside = stop_audit.REPO / "docs-runs" / "x-20260816" / "brief.md"
+    assert stop_audit.relative(inside) == "docs-runs/x-20260816/brief.md"
+
+
+def test_path_outside_the_repo_stays_absolute_but_posix(tmp_path: Path) -> None:
+    outside = tmp_path / "чужой.md"
+    got = stop_audit.relative(outside)
+    assert "\\" not in got
+    assert got.endswith("чужой.md")
+
+
+def test_log_path_is_overridable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`probe-runs/` был вдвойне неверен: это один конкретный прогон, а не место для логов."""
+    monkeypatch.setenv("COLLIMATOR_STOP_AUDIT", str(tmp_path / "своё.jsonl"))
+    import importlib
+
+    reloaded = importlib.reload(stop_audit)
+    assert reloaded.LOG == tmp_path / "своё.jsonl"
+    monkeypatch.delenv("COLLIMATOR_STOP_AUDIT")
+    importlib.reload(stop_audit)

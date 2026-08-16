@@ -11,3 +11,4 @@ __pycache__/
 
 # машинное: пути, UUID профиля шлюза — не для публичного репозитория
 .claude/settings.local.json
+logs/
