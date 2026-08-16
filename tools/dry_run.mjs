@@ -15,6 +15,10 @@
 //
 // The third argument is the `args` the script receives, as JSON. Scripts that validate
 // their input reject the default, and that rejection is itself worth exercising.
+//
+// DRY_ORDER_MISMATCH=1 makes the brief report that the order does not match the brief already on
+// disk. That is a refusal, not a failure, so it cannot live in "bad" mode — it would end every
+// failure run at the first stage. It gets its own invocation.
 
 import { readFileSync } from 'node:fs'
 
@@ -101,6 +105,14 @@ function fill(schema, prompt) {
         // real numbers: the stub answers the shape AND the kind.
         if (key === 'language') {
           out[key] = happy ? 'Russian' : 'Klingon'
+          continue
+        }
+        // A deliberate stop, not a failure mode. `false` here means "this order is a different
+        // job" and correctly refuses to start — but sweeping the whole "bad" path with it would
+        // end every failure run at the first stage and leave the branches it exists to cover
+        // untested. The mismatch branch has its own invocation instead.
+        if (key === 'order_matches_existing_brief') {
+          out[key] = !process.env.DRY_ORDER_MISMATCH
           continue
         }
         if (key === 'stdout') {

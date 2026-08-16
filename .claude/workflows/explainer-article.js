@@ -301,9 +301,19 @@ const BRIEF_OUT = {
   type: 'object',
   // Only what the order cannot fail to imply. The bounds are absent when the order says
   // nothing about length, and absent is a meaningful answer here, not a missing one.
-  required: ['language', 'aspects'],
+  required: ['language', 'aspects', 'order_matches_existing_brief'],
   properties: {
     language: { type: 'string', description: 'language of the article, one word' },
+    // The one thing only this agent can answer: it is the only stage that sees both the order
+    // and the brief a previous run wrote from a different one. `continue` without this check is
+    // a loophole — a new job wearing an old directory, inheriting research done for something
+    // else, and the comparison against the old run measuring nothing.
+    order_matches_existing_brief: {
+      type: 'boolean',
+      description:
+        'true if no brief existed, or the existing one already describes THIS order; ' +
+        'false if the order asks for a different subject, language or length',
+    },
     min_prose: { type: 'number', description: 'lower bound in characters, only if the order gives one' },
     max_prose: { type: 'number', description: 'upper bound in characters, only if the order gives one' },
     aspects: {
@@ -696,6 +706,18 @@ const brief = must(
   ),
   'brief — without aspects and a language there is nowhere to go',
 )
+// A continuation is a continuation of the same job. When the order changed, the directory holds
+// research done for a different question, and carrying on inside it produces an article built
+// half from one brief and half from another — with nothing in the result to say so.
+// `fresh` rebuilds the directory from nothing, so whatever brief used to be there is not being
+// continued — it is being replaced, deliberately, and there is nothing to mismatch.
+if (brief.order_matches_existing_brief === false && !cfg.fresh) {
+  throw new Error(
+    `заказ не совпадает с брифом, который уже лежит в ${run}. Это другая работа, а не ` +
+      `продолжение: возьмите новый каталог (tools/newrun.py) или пересоберите этот с нуля ` +
+      `через config.fresh=true.`,
+  )
+}
 const minProse = brief.min_prose
 const maxProse = brief.max_prose
 const hasBounds = Boolean(minProse || maxProse)

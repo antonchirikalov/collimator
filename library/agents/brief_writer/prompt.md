@@ -22,6 +22,18 @@ brief does not describe — a different subject, a different language, a differe
 say so plainly in the brief itself, because the artifacts already on disk were built for the
 old one.
 
+And say it through the schema as well, in `order_matches_existing_brief`. That field is the
+only place in the whole pipeline where this can be noticed at all: you are the one stage that
+sees both the order and what a previous run understood it to be. Answer `true` when there was
+no brief, or when the one there already describes this order — including when you tightened its
+wording without changing what is being asked for. Answer `false` when the subject, the language
+or the length is a different one.
+
+A `false` stops the run, and it should: everything below you would otherwise be built half from
+one brief and half from another, with nothing in the result to say so. Do not soften it into a
+`true` because the two orders are about roughly the same area — "roughly the same" is exactly
+the case that produces an article nobody can trace.
+
 ## What the brief states
 
 The subject. Who the reader is and what they already know. The language of the document.

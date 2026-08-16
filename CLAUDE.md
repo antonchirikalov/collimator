@@ -25,6 +25,7 @@ node tools/dry_run.mjs .claude/workflows/<скрипт>.js ok        # прог�
 node tools/dry_run.mjs .claude/workflows/<скрипт>.js bad       # то же, все ветви провалов
 node tools/dry_run.mjs .claude/workflows/explainer-article.js ok '{"runDir":"d/r","brief":"t","config":{"fresh":true}}'
 node tools/dry_run.mjs .claude/workflows/explainer-article.js ok '{"runDir":"d/r","brief":"t","config":{"stages":["research"]}}'
+DRY_ORDER_MISMATCH=1 node tools/dry_run.mjs .claude/workflows/explainer-article.js ok '{"runDir":"d/r","brief":"t","config":{"continue":true}}'
 python -X utf8 tools/rounds.py --dir <прогон>/rounds --last-only  # чем продолжать петлю
 python -X utf8 tools/listing.py --dir <прогон>/sources            # что искатели реально нашли
 python -X utf8 tools/newrun.py --base docs-runs --label <о чём>  # имя каталога под НОВЫЙ прогон
@@ -206,6 +207,13 @@ docs-runs/vnimanie-v-transformerah-20260816-135918
 Три намерения — три разных действия, и ни одно не угадывается за вызывающего: неверная догадка
 дорога в одну сторону и незаметна в другую. Этап `draft` под правило не попадает — запуск только
 его и есть продолжение по смыслу.
+
+**`continue` был лазейкой, и её закрыл второй замок.** Опасен не повторный каталог сам по себе, а
+повторный каталог **под другой заказ**: тогда статья строится наполовину по одному брифу и
+наполовину по другому, и в результате нет ничего, что об этом скажет. Заметить это может ровно
+один агент — `brief_writer`, единственный, кто видит и заказ, и бриф, написанный прошлым прогоном
+с другого заказа. Он отвечает полем `order_matches_existing_brief`, и `false` останавливает
+прогон. Под `config.fresh` замок снят: там старый бриф не продолжают, а заменяют.
 
 ## Как проверяется, что ничего не потерялось
 
