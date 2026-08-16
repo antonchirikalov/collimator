@@ -805,6 +805,24 @@ if (cfg.fresh) {
       `черновик=${present.has(ARTICLE_PATH)}`,
   )
 
+  // Starting research over somebody's finished run is the one ambiguous act here, and it used to
+  // pass silently: seven launches of one article went into the same directory, each inheriting
+  // the last one's material and draft, and the comparison between them measured nothing. Two
+  // launches pointed at it at once did worse — one overwrote the other's article mid-round.
+  //
+  // The two intents are different acts and now look different. Starting fresh means a directory
+  // of its own, minted by `tools/newrun.py`. Continuing an interrupted run means saying so.
+  // Nothing is guessed on the caller's behalf, because the wrong guess is expensive in one
+  // direction and invisible in the other.
+  const hasPreviousOutput = present.has(MATERIAL_PATH) || present.has(ARTICLE_PATH)
+  if (RUN_RESEARCH && hasPreviousOutput && !cfg.continue) {
+    throw new Error(
+      `в каталоге ${run} уже лежит результат прошлого прогона. ` +
+        `Новый прогон — новый каталог: python -X utf8 tools/newrun.py --base docs-runs --label <о чём>. ` +
+        `Продолжить прерванный — config.continue=true. Пересобрать здесь же с нуля — config.fresh=true.`,
+    )
+  }
+
   // The rounds already judged. Recovered from disk rather than from the process cache, for the
   // same reason as everything else here: the cache does not outlive the process.
   const recorded = await agent(commands([`${ROUNDS_TOOL} --dir ${ROUNDS_DIR} --last-only`]), {
