@@ -187,6 +187,7 @@ const MODELS = Object.assign(
 // constant: a pipeline vendored elsewhere keeps the stage and changes the path.
 const GATE_TOOL = cfg.gateTool || 'python -X utf8 tools/gate.py'
 const ROUNDS_TOOL = cfg.roundsTool || 'python -X utf8 tools/rounds.py'
+const LISTING_TOOL = cfg.listingTool || 'python -X utf8 tools/listing.py'
 
 // The two correctors between the writer and the critics. On by default and switchable off,
 // because a pipeline whose documents carry no arithmetic and no citations pays for them for
@@ -516,6 +517,17 @@ const ROUNDS = {
 // command in that same order, so the index is the identity. Asking an agent to hand a path
 // back is asking it to re-derive something already known, and the project invariant says not
 // to: a `path` field in a schema turns "say where it is" into a substitute for "put it there".
+// What listing.py prints. The script names every path it writes; this reports the paths it
+// could not have named — the per-source files the finder keeps on its own judgement.
+const LISTING = {
+  type: 'object',
+  required: ['report', 'files'],
+  properties: {
+    report: REPORT,
+    files: { type: 'array', items: { type: 'string' } },
+  },
+}
+
 const EXISTENCE = {
   type: 'object',
   required: ['checks'],
@@ -836,6 +848,48 @@ for (let i = 0; i < brief.aspects.length; i++) {
 if (found.length === 0) throw new Error('not one source finder returned anything')
 
 const sourcePorts = found.map((f) => ({ port: `sources:${f.aspect.slug}`, path: f.path }))
+
+// --- Everything the finders actually kept -----------------------------------------------------
+//
+// The four ports above are the files the script named, one per aspect. The finder also keeps one
+// file per source it read — its contract says so — and until this stage existed nobody opened
+// them: a measured run had 79 KB reaching downstream agents out of 260 KB on disk. Twenty-four
+// sources searched for, read, paid for, and invisible.
+//
+// That is the likeliest reason attribution errors survived eleven rounds. The writer quoted an
+// aspect summary while the note on the specific paper sat unopened beside it, and the fact
+// checker was handed the same four summaries to check attribution against.
+//
+// Enumerating is not asking an agent where it put something: the script still names every path
+// it writes. This only reports what is there, so the stages that need primary material get it.
+let allSourcePorts = sourcePorts
+if (sourcePaths.length) {
+  const listed = await agent(
+    commands([`${LISTING_TOOL} --dir ${run}/sources --ext .md`]),
+    {
+      agentType: 'gate-runner',
+      model: MODELS.gate,
+      label: 'sources:list',
+      phase: 'Research',
+      schema: LISTING,
+    },
+  )
+  const files = (listed && listed.files) || []
+  if (!files.length) {
+    log('[sources] перечислить каталог не удалось — дальше идут только файлы по аспектам')
+  } else {
+    const aspectFiles = new Set(sourcePaths)
+    const extra = files.filter((f) => !aspectFiles.has(f))
+    allSourcePorts = [
+      ...sourcePorts,
+      ...extra.map((path) => ({ port: `source:${path.split('/').pop().replace(/\.md$/, '')}`, path })),
+    ]
+    log(
+      `[sources] на диске ${files.length} файлов: по аспектам ${sourcePaths.length}, ` +
+        `по источникам ${extra.length} — все уходят аналитику и сверяющему`,
+    )
+  }
+}
 const totalSources = found.reduce((sum, f) => sum + f.sources.length, 0)
 const reusedCount = found.filter((f) => f.reused).length
 log(
@@ -845,8 +899,10 @@ log(
 
 // --- Analyse: between reading and writing, or the writer paraphrases its last source ---------
 
+// The analyst reconciles sources, so it gets all of them — the per-aspect summaries and the
+// per-source notes both. This is the stage whose whole job is "what do these say together".
 const analyseTask = task({
-  inputs: [{ port: 'brief', path: BRIEF_PATH }, ...sourcePorts],
+  inputs: [{ port: 'brief', path: BRIEF_PATH }, ...allSourcePorts],
   output: MATERIAL_PATH,
 })
 
@@ -1228,11 +1284,13 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
 
     const checked = await agent(
       task({
+        // All of them, not the four summaries. Checking an attribution against a summary of
+        // the paper is how a wrong corpus name survives a correction stage.
         inputs: [
           { port: 'draft', path: ARTICLE_PATH },
           { port: 'brief', path: BRIEF_PATH },
           ...voicePort,
-          ...sourcePorts,
+          ...allSourcePorts,
         ],
         output: ARTICLE_PATH,
       }),
