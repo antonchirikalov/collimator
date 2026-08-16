@@ -114,7 +114,7 @@ def test_file_missing_is_a_problem_without_measures(
     absent = tmp_path / "нет.md"
     report, code = run(capsys, monkeypatch, "--file", str(absent))
     assert report["ok"] is False
-    assert report["problems"] == [f"output missing: {absent}"]
+    assert report["problems"] == [f"output missing: {absent.as_posix()}"]
     assert report["measures"] == {}
     assert code == 0
 
@@ -388,7 +388,7 @@ def test_dir_missing(
 ) -> None:
     absent = tmp_path / "нет"
     report, _ = run(capsys, monkeypatch, "--dir", str(absent))
-    assert report["problems"] == [f"output directory missing: {absent}"]
+    assert report["problems"] == [f"output directory missing: {absent.as_posix()}"]
     assert report["measures"] == {}
 
 
@@ -397,7 +397,7 @@ def test_dir_is_a_file_counts_as_missing(
 ) -> None:
     doc = write(tmp_path, "текст")
     report, _ = run(capsys, monkeypatch, "--dir", str(doc))
-    assert report["problems"] == [f"output directory missing: {doc}"]
+    assert report["problems"] == [f"output directory missing: {doc.as_posix()}"]
 
 
 def test_dir_empty(
@@ -595,7 +595,7 @@ def test_missing_msys_file_message_names_the_path_as_given(
 ) -> None:
     given = "/c/такого/каталога/нет/doc.md"
     report, _ = run(capsys, monkeypatch, "--file", given)
-    assert report["problems"] == [f"output missing: {Path(given)}"]
+    assert report["problems"] == [f"output missing: {Path(given).as_posix()}"]
 
 
 # --- журнал вызовов -------------------------------------------------------------------
@@ -659,3 +659,63 @@ def test_unwritable_log_does_not_fail_the_check(
     )
     assert report["ok"] is True
     assert code == 0
+
+
+def test_no_problem_message_spells_a_path_the_windows_way(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Скрипт передал `docs-runs/x.md`, значит и в жалобе стоит `docs-runs/x.md`.
+
+    Сообщение читают потом и глазами, и поиском по журналу: единственный вопрос, который
+    к нему задают, — «что писали в этом прогоне» — это совпадение подстроки с каталогом
+    прогона, а путь через обратный слеш с ним не совпадает.
+    """
+    absent, _ = run(
+        capsys,
+        monkeypatch,
+        "--file",
+        str(tmp_path / "нет" / "нет.md"),
+        "--dir",
+        str(tmp_path / "тоже-нет"),
+    )
+    # Пропавшие правила видны только на существующем файле: без файла проверять нечего,
+    # и гейт до чтения шаблонов не доходит.
+    rules, _ = run(
+        capsys,
+        monkeypatch,
+        "--file",
+        str(write(tmp_path, "текст")),
+        "--forbid-file",
+        str(tmp_path / "правил-нет.txt"),
+    )
+    problems = absent["problems"] + rules["problems"]
+    assert len(problems) == 3
+    assert not [p for p in problems if "\\" in p]
+
+
+def test_log_note_records_what_the_call_was_for(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """«Файла нет» на входе прогона — ответ, на выходе — дефект. Различает их только пометка."""
+    log = tmp_path / "tools.jsonl"
+    run(
+        capsys,
+        monkeypatch,
+        "--file",
+        str(tmp_path / "нет.md"),
+        "--log",
+        str(log),
+        "--log-note",
+        "resume: что уже готово",
+    )
+    line = json.loads(log.read_text(encoding="utf-8").splitlines()[0])
+    assert line["note"] == "resume: что уже готово"
+
+
+def test_log_note_is_optional(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doc = write(tmp_path, "текст")
+    log = tmp_path / "tools.jsonl"
+    run(capsys, monkeypatch, "--file", str(doc), "--log", str(log))
+    assert json.loads(log.read_text(encoding="utf-8").splitlines()[0])["note"] is None

@@ -30,7 +30,7 @@ def snapshot(source: Path, target: Path, overwrite: bool) -> tuple[bool, list[st
     """Copy source to target. Returns (copied, problems)."""
     problems: list[str] = []
     if not source.is_file():
-        problems.append(f"nothing to copy: {source}")
+        problems.append(f"nothing to copy: {source.as_posix()}")
         return False, problems
 
     if target.exists() and not overwrite:
@@ -39,7 +39,7 @@ def snapshot(source: Path, target: Path, overwrite: bool) -> tuple[bool, list[st
             # Re-running a round that already produced this snapshot is not an error, and it is
             # not a copy either. Saying so beats both a silent overwrite and a false failure.
             return False, problems
-        problems.append(f"target exists with different content: {target}")
+        problems.append(f"target exists with different content: {target.as_posix()}")
         return False, problems
 
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -67,7 +67,7 @@ def main() -> int:
             "bytes": args.to.stat().st_size if args.to.is_file() else 0,
         },
     }
-    toollog.append(args.log, "snapshot", report)
+    toollog.append(args.log, "snapshot", report, args.log_note)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if (problems and args.strict) else 0
 

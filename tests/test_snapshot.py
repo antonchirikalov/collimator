@@ -101,6 +101,13 @@ def test_report_shape_matches_the_gate(
 def test_strict_turns_a_refusal_into_a_failure(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _, code = run(capsys, monkeypatch, "--file", str(tmp_path / "нет.md"), "--to",
-                  str(tmp_path / "b.md"), "--strict")
+    _, code = run(
+        capsys,
+        monkeypatch,
+        "--file",
+        str(tmp_path / "нет.md"),
+        "--to",
+        str(tmp_path / "b.md"),
+        "--strict",
+    )
     assert code == 1

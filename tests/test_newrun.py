@@ -50,7 +50,9 @@ def test_two_runs_in_the_same_second_collide_and_that_is_visible(
     """`--check` существует ровно чтобы столкновение было отказом, а не тихим наследованием."""
     target = newrun.run_dir(str(tmp_path), "x", datetime.now(tz=UTC))
     Path(target).mkdir(parents=True)
-    monkeypatch.setattr(sys, "argv", ["newrun.py", "--base", str(tmp_path), "--label", "x", "--check"])
+    monkeypatch.setattr(
+        sys, "argv", ["newrun.py", "--base", str(tmp_path), "--label", "x", "--check"]
+    )
     monkeypatch.setattr(newrun, "run_dir", lambda *a, **k: target)
     assert newrun.main() == 1
     assert "уже существует" in capsys.readouterr().err

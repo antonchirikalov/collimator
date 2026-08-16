@@ -65,7 +65,7 @@ def patterns_of(path: Path) -> tuple[list[str], list[str]]:
     violations because it had no patterns reads exactly like a gate that passed.
     """
     if not path.is_file():
-        return [], [f"pattern file missing: {path}"]
+        return [], [f"pattern file missing: {path.as_posix()}"]
     lines = path.read_text(encoding="utf-8").splitlines()
     return [ln.strip() for ln in lines if ln.strip() and not COMMENT.match(ln)], []
 
@@ -156,7 +156,7 @@ def main() -> int:
     if args.file is not None:
         target = resolve_path(args.file)
         if not target.exists():
-            problems.append(f"output missing: {target}")
+            problems.append(f"output missing: {target.as_posix()}")
         else:
             text = target.read_text(encoding="utf-8")
             chars = len(text)
@@ -206,7 +206,7 @@ def main() -> int:
     if args.dir is not None:
         target_dir = resolve_path(args.dir)
         if not target_dir.is_dir():
-            problems.append(f"output directory missing: {target_dir}")
+            problems.append(f"output directory missing: {target_dir.as_posix()}")
         else:
             entries = sorted(x.name for x in target_dir.iterdir())
             measures["entries"] = len(entries)
@@ -216,7 +216,7 @@ def main() -> int:
                 problems.append(f"min_entries {args.min_entries} not met (got {len(entries)})")
 
     report = {"ok": not problems, "problems": problems, "measures": measures}
-    toollog.append(args.log, "gate", report)
+    toollog.append(args.log, "gate", report, args.log_note)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if (problems and args.strict) else 0
 

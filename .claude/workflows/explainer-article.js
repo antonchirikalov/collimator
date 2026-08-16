@@ -663,13 +663,18 @@ const EXISTENCE = {
 // agent is forbidden to create files, and that rule has paid for itself twice — this is the
 // measurement leaving a record, written by whoever did the measuring.
 const LOG_FLAG = `--log ${TOOLS_LOG}`
+// The same command means different things at different points, and the log has to say which.
+// `output missing` while asking what already exists is the expected answer on a fresh run;
+// the same words while checking that an agent left its file behind are a defect. Without the
+// note, a clean run opens with eight lines that read as failures.
+const noted = (purpose) => `${LOG_FLAG} --log-note "${purpose}"`
 
-function gateCommand(path, min, max) {
+function gateCommand(path, min, max, purpose = 'article gate') {
   const bounds = []
   if (min) bounds.push(`--min-prose ${min}`)
   if (max) bounds.push(`--max-prose ${max}`)
   for (const file of FORBID_FILES) bounds.push(`--forbid-file ${file}`)
-  return `${GATE_TOOL} --file ${path} ${bounds.join(' ')} ${LOG_FLAG}`.trim()
+  return `${GATE_TOOL} --file ${path} ${bounds.join(' ')} ${noted(purpose)}`.trim()
 }
 
 // What gate_runner receives is a list of commands and nothing else. How to run them, what not
@@ -682,9 +687,9 @@ function commands(list) {
 // A file that exists but holds 200 characters is a file an agent created and abandoned, which
 // is why existence is measured rather than tested: `--min-length` turns "is it there" and "is
 // there anything in it" into one number the script can branch on.
-function existenceCommands(paths) {
+function existenceCommands(paths, purpose = 'file is where it should be') {
   return commands(
-    paths.map((p) => `${GATE_TOOL} --file ${p} --min-length ${MIN_ARTIFACT_CHARS} ${LOG_FLAG}`),
+    paths.map((p) => `${GATE_TOOL} --file ${p} --min-length ${MIN_ARTIFACT_CHARS} ${noted(purpose)}`),
   )
 }
 
@@ -721,7 +726,7 @@ async function recordHandoff() {
 }
 
 async function auditRun() {
-  const audit = await call(commands([`${LISTING_TOOL} --dir ${run} --ext "" --recursive ${LOG_FLAG}`]), {
+  const audit = await call(commands([`${LISTING_TOOL} --dir ${run} --ext "" --recursive ${noted('audit: anything produced and never read')}`]), {
     agentType: 'gate-runner',
     model: MODELS.gate,
     label: 'audit',
@@ -872,7 +877,7 @@ if (cfg.fresh) {
 } else {
   phase('Resume')
   const resumePaths = [...sourcePaths, MATERIAL_PATH, ARTICLE_PATH]
-  const onDisk = await call(existenceCommands(resumePaths), {
+  const onDisk = await call(existenceCommands(resumePaths, 'resume: what is already on disk'), {
     agentType: 'gate-runner',
     model: MODELS.gate,
     label: 'resume',
@@ -918,7 +923,7 @@ if (cfg.fresh) {
 
   // The rounds already judged. Recovered from disk rather than from the process cache, for the
   // same reason as everything else here: the cache does not outlive the process.
-  const recorded = await call(commands([`${ROUNDS_TOOL} --dir ${ROUNDS_DIR} --last-only ${LOG_FLAG}`]), {
+  const recorded = await call(commands([`${ROUNDS_TOOL} --dir ${ROUNDS_DIR} --last-only ${noted('how many rounds are already done')}`]), {
     agentType: 'gate-runner',
     model: MODELS.gate,
     label: 'resume:rounds',
@@ -953,7 +958,7 @@ if (cfg.fresh) {
   // before it died with that process — and the length budget silently goes missing exactly
   // when the run is being continued because the length was wrong.
   if (present.has(ARTICLE_PATH) && startRound > 1) {
-    const sizedNow = await call(commands([gateCommand(ARTICLE_PATH, minProse, maxProse)]), {
+    const sizedNow = await call(commands([gateCommand(ARTICLE_PATH, minProse, maxProse, 'resume: size of the draft found')]), {
       agentType: 'gate-runner',
       model: MODELS.gate,
       label: 'resume:size',
@@ -1081,7 +1086,7 @@ if (found.length) {
       found.map(
         (f) =>
           `${LISTING_TOOL} --dir ${sourceDirOf(f.aspect.slug)} --ext .md ` +
-          `--exclude ${f.aspect.slug}.md ${LOG_FLAG}`,
+          `--exclude ${f.aspect.slug}.md ${noted('what finder ' + f.aspect.slug + ' brought back')}`,
       ),
     ),
     {
@@ -1551,7 +1556,7 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
   }
 
   // Measure before judging, so neither critic spends a remark on something already counted.
-  const sized = await call(commands([gateCommand(ARTICLE_PATH, minProse, maxProse)]), {
+  const sized = await call(commands([gateCommand(ARTICLE_PATH, minProse, maxProse, `round ${round}`)]), {
     agentType: 'gate-runner',
     model: MODELS.gate,
     label: `gate:${round}`,
@@ -1724,7 +1729,7 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
   // about one text, and the two halves of that have to be written at the same moment or they
   // stop being about each other.
   const snapped = await call(
-    commands([`${SNAPSHOT_TOOL} --file ${ARTICLE_PATH} --to ${draftPathOf(round)} ${LOG_FLAG}`]),
+    commands([`${SNAPSHOT_TOOL} --file ${ARTICLE_PATH} --to ${draftPathOf(round)} ${noted('draft snapshot of round ' + round)}`]),
     {
       agentType: 'file-copier',
       model: MODELS.copy,

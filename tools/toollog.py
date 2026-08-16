@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 
-def append(log: Path | None, tool: str, report: dict[str, Any]) -> None:
+def append(log: Path | None, tool: str, report: dict[str, Any], note: str | None = None) -> None:
     """Append one JSON line describing this call. Never raises: a log is not worth a run.
 
     A failure to write the receipt must not fail the measurement — the caller is branching on
@@ -38,6 +38,11 @@ def append(log: Path | None, tool: str, report: dict[str, Any]) -> None:
     line = {
         "at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "tool": tool,
+        # What the call was for. The same command means different things at different points:
+        # "output missing" while asking what already exists is the expected answer on a fresh
+        # run, and the same words while checking that an agent left its file behind are a
+        # defect. Without this the log reads as eight problems at the start of every clean run.
+        "note": note,
         "argv": sys.argv[1:],
         "ok": report.get("ok"),
         "measures": report.get("measures", {}),
@@ -58,4 +63,10 @@ def add_argument(parser: Any) -> None:
         type=Path,
         default=None,
         help="append one JSON line about this call to this file",
+    )
+    parser.add_argument(
+        "--log-note",
+        default=None,
+        metavar="TEXT",
+        help="what this call is for; goes into the log line beside the verdict",
     )

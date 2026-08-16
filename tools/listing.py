@@ -43,7 +43,7 @@ def listing(
     """
     problems: list[str] = []
     if not directory.is_dir():
-        problems.append(f"directory missing: {directory}")
+        problems.append(f"directory missing: {directory.as_posix()}")
         return [], problems
 
     found: list[str] = []
@@ -87,7 +87,7 @@ def main() -> int:
         "measures": {"files": len(files)},
         "files": files,
     }
-    toollog.append(args.log, "listing", report)
+    toollog.append(args.log, "listing", report, args.log_note)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if (problems and args.strict) else 0
 

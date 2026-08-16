@@ -65,7 +65,9 @@ def frontmatter(path: Path) -> dict[str, object]:
 
 def code_lines(path: Path) -> list[str]:
     """Строки скрипта без комментариев — то, что реально исполняется."""
-    return [ln for ln in path.read_text(encoding="utf-8").splitlines() if not COMMENT_LINE.match(ln)]
+    return [
+        ln for ln in path.read_text(encoding="utf-8").splitlines() if not COMMENT_LINE.match(ln)
+    ]
 
 
 # --- управляющие символы --------------------------------------------------------------
