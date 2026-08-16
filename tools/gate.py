@@ -24,6 +24,7 @@ import argparse
 import json
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import toollog
@@ -56,6 +57,18 @@ MSYS_DRIVE = re.compile(r"^/([A-Za-z])(?=/|$)")
 # fenced blocks and inline code are removed first, because `d_k ** 0.5` is a power and
 # `**важно**` is bold, and only the caller knows which was meant.
 COMMENT = re.compile(r"^\s*#")
+HEADING = re.compile(r"^(#{1,6})[ \t]+(.*\S)")
+
+
+@dataclass
+class Section:
+    """One heading while it is still open: what it is, and whether anything filled it."""
+
+    level: int
+    title: str
+    line: int
+    filled: bool = False
+    has_children: bool = False
 
 
 def patterns_of(path: Path) -> tuple[list[str], list[str]]:
@@ -122,6 +135,49 @@ def prose_of(text: str) -> str:
     return BLANKS.sub("\n", t).strip()
 
 
+def empty_sections(text: str, floor: int) -> list[str]:
+    """Headings with nothing under them, by title, in order.
+
+    A length floor catches "the agent wrote nothing" and misses the failure that actually
+    happens: the agent writes the SHAPE of the artifact — every heading the contract asks for,
+    in the right order — and leaves the work out. Measured live: an analysis built from 25
+    source files came back as 1 748 bytes of headings alone, which is comfortably past any
+    floor a document that size would be given.
+
+    A section counts as filled by any non-blank line that is not itself a heading, and content
+    fills every heading open above it — a filled child fills its parent, which is what a reader
+    would say looking at it. Only leaves are reported: naming a parent whose subsections are
+    empty says the same thing twice and buries the one title worth acting on.
+    """
+    open_heads: list[Section] = []
+    empty: list[Section] = []
+
+    def close() -> None:
+        section = open_heads.pop()
+        if not section.filled and not section.has_children:
+            empty.append(section)
+
+    for number, line in enumerate(text.splitlines()):
+        head = HEADING.match(line)
+        if head:
+            level = len(head.group(1))
+            while open_heads and open_heads[-1].level >= level:
+                close()
+            if open_heads:
+                open_heads[-1].has_children = True
+            open_heads.append(Section(level, head.group(2), number))
+            continue
+        if len(line.strip()) < floor:
+            continue
+        for section in open_heads:
+            section.filled = True
+
+    while open_heads:
+        close()
+
+    return [section.title for section in sorted(empty, key=lambda s: s.line)]
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Deterministic content gates.")
     p.add_argument("--file", type=Path, help="document to check")
@@ -144,6 +200,15 @@ def main() -> int:
         type=Path,
         metavar="PATH",
         help="file of patterns matched outside code, one per line; repeatable",
+    )
+    p.add_argument(
+        "--no-empty-sections",
+        nargs="?",
+        type=int,
+        const=1,
+        default=None,
+        metavar="MIN_LINE",
+        help="every heading must have content under it; optional floor on a line that counts",
     )
     p.add_argument("--min-entries", type=int, help="floor on entries directly inside --dir")
     p.add_argument("--strict", action="store_true", help="also exit 1 when the gate fails")
@@ -172,6 +237,16 @@ def main() -> int:
                 problems.append(f"max_prose {args.max_prose} exceeded (got {prose})")
             if args.min_prose is not None and prose < args.min_prose:
                 problems.append(f"min_prose {args.min_prose} not met (got {prose})")
+
+            if args.no_empty_sections is not None:
+                empty = empty_sections(text, args.no_empty_sections)
+                measures["empty_sections"] = empty
+                if empty:
+                    # By name, not by count. The number says something is missing; the name
+                    # says what, and only the name tells the caller whether it matters.
+                    problems.append(
+                        f"headings with nothing under them ({len(empty)}): " + "; ".join(empty[:8])
+                    )
 
             hits: dict[str, int] = {}
             for pattern in args.forbid:

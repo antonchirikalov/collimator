@@ -719,3 +719,68 @@ def test_log_note_is_optional(
     log = tmp_path / "tools.jsonl"
     run(capsys, monkeypatch, "--file", str(doc), "--log", str(log))
     assert json.loads(log.read_text(encoding="utf-8").splitlines()[0])["note"] is None
+
+
+# --- --no-empty-sections ---------------------------------------------------------------
+#
+# Пол по длине ловит «агент не написал ничего» и пропускает то, что случается на самом деле:
+# агент пишет ФОРМУ артефакта — все заголовки контракта в правильном порядке — и оставляет
+# работу снаружи. Замерено живьём: разбор по 25 источникам вернулся 1748 байтами одних
+# заголовков, то есть далеко выше любого пола, какой такому документу поставят.
+
+
+def test_heading_without_content_is_named(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doc = write(tmp_path, "# Разбор\n\n## established\n\n## implications\n\nВот это есть.\n")
+    report, _ = run(capsys, monkeypatch, "--file", str(doc), "--no-empty-sections")
+    assert report["ok"] is False
+    assert report["measures"]["empty_sections"] == ["established"]
+    assert "established" in report["problems"][0]
+
+
+def test_filled_document_passes(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doc = write(tmp_path, "# Заголовок\n\nтекст\n\n## Раздел\n\nещё текст\n")
+    report, _ = run(capsys, monkeypatch, "--file", str(doc), "--no-empty-sections")
+    assert report["ok"] is True
+    assert report["measures"]["empty_sections"] == []
+
+
+def test_parent_is_filled_by_a_filled_child(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Так на это смотрит читатель: раздел, у которого наполнен подраздел, не пустует."""
+    doc = write(tmp_path, "# Верх\n\n## Низ\n\nсодержимое\n")
+    report, _ = run(capsys, monkeypatch, "--file", str(doc), "--no-empty-sections")
+    assert report["measures"]["empty_sections"] == []
+
+
+def test_trailing_heading_counts_as_empty(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Ровно то, что видно у агента, умершего посреди наполнения каркаса."""
+    doc = write(tmp_path, "# Верх\n\nтекст\n\n## Последний\n")
+    report, _ = run(capsys, monkeypatch, "--file", str(doc), "--no-empty-sections")
+    assert report["measures"]["empty_sections"] == ["Последний"]
+
+
+def test_line_floor_ignores_a_token_line(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Прочерк вместо работы — тоже пустой раздел, если вызывающий назвал длину значимой."""
+    doc = write(tmp_path, "# Верх\n\n## Раздел\n\n—\n")
+    lenient, _ = run(capsys, monkeypatch, "--file", str(doc), "--no-empty-sections")
+    strict, _ = run(capsys, monkeypatch, "--file", str(doc), "--no-empty-sections", "20")
+    assert lenient["measures"]["empty_sections"] == []
+    assert strict["measures"]["empty_sections"] == ["Раздел"]
+
+
+def test_check_is_off_unless_asked(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doc = write(tmp_path, "# Пусто\n")
+    report, _ = run(capsys, monkeypatch, "--file", str(doc))
+    assert report["ok"] is True
+    assert "empty_sections" not in report["measures"]
