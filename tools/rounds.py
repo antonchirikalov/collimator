@@ -67,6 +67,8 @@ def parse_round(path: Path) -> dict[str, object]:
         "remarks": remarks,
         "style": style,
         "gate": gate,
+        # What the loop minimises, counted here where the three buckets are still separate lists.
+        "items": len(remarks) + len(style) + len(gate),
     }
 
 
@@ -126,10 +128,20 @@ def main() -> int:
     # and a terminal has no such budget.
     emitted = rounds[-1:] if args.last_only else rounds
 
+    # How many items each round left open, for every round — not only the emitted one. The loop
+    # stops on a plateau, and a plateau is a property of the article rather than of the launch:
+    # a resumed run that starts counting from scratch calls the first round it sees the best one
+    # and pays for two more to find out otherwise. Measured live — 16, 12, 16, 12, 16 — where the
+    # detector should have stopped at the second 12.
+    #
+    # Counts, not texts: this is the same channel that once truncated five rounds of verbatim
+    # remarks into two, and one number per round stays small however long the loop runs.
+    counts = [{"round": int(str(r["round"])), "items": int(str(r["items"]))} for r in rounds]
+
     report = {
         "ok": not problems,
         "problems": problems,
-        "measures": {"rounds": len(rounds), "last_round": last},
+        "measures": {"rounds": len(rounds), "last_round": last, "counts": counts},
         "rounds": emitted,
     }
     toollog.append(args.log, "rounds", report, args.log_note)

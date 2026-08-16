@@ -46,7 +46,10 @@ def test_missing_directory_is_not_a_problem(
     report, code = run(capsys, monkeypatch, "--dir", str(tmp_path / "нет"))
     assert report["ok"] is True
     assert report["rounds"] == []
-    assert report["measures"] == {"rounds": 0, "last_round": 0}
+    assert {k: v for k, v in report["measures"].items() if k != "counts"} == {
+        "rounds": 0,
+        "last_round": 0,
+    }
     assert code == 0
 
 
@@ -142,7 +145,10 @@ def test_last_round_is_the_highest(
     write_round(tmp_path, 1, "Round 1 — verdict=revise style=revise", ["x"])
     write_round(tmp_path, 2, "Round 2 — verdict=ok style=ok", [])
     report, _ = run(capsys, monkeypatch, "--dir", str(tmp_path))
-    assert report["measures"] == {"rounds": 2, "last_round": 2}
+    assert {k: v for k, v in report["measures"].items() if k != "counts"} == {
+        "rounds": 2,
+        "last_round": 2,
+    }
 
 
 def test_a_gap_in_the_records_is_reported(
@@ -190,7 +196,10 @@ def test_last_only_emits_one_round_but_counts_all(
     for n in (1, 2, 3, 4, 5):
         write_round(tmp_path, n, f"Round {n} — verdict=revise style=revise", [f"замечание {n}"])
     report, _ = run(capsys, monkeypatch, "--dir", str(tmp_path), "--last-only")
-    assert report["measures"] == {"rounds": 5, "last_round": 5}
+    assert {k: v for k, v in report["measures"].items() if k != "counts"} == {
+        "rounds": 5,
+        "last_round": 5,
+    }
     assert len(report["rounds"]) == 1
     assert report["rounds"][0]["round"] == 5
     assert report["rounds"][0]["remarks"] == ["замечание 5"]
@@ -222,3 +231,23 @@ def test_full_output_is_still_the_default(
         write_round(tmp_path, n, f"Round {n} — verdict=ok style=ok", ["x"])
     report, _ = run(capsys, monkeypatch, "--dir", str(tmp_path))
     assert len(report["rounds"]) == 3
+
+
+def test_counts_cover_every_round_even_with_last_only(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Полка — свойство статьи, а не запуска.
+
+    Продолженный прогон, считающий с нуля, назовёт лучшим первый увиденный круг и заплатит
+    ещё двумя, чтобы выяснить обратное. Замерено живьём: 16, 12, 16, 12, 16 — детектор обязан
+    был остановиться на втором двенадцатом. Числа, а не тексты: этот же канал однажды урезал
+    пять кругов дословных замечаний до двух.
+    """
+    write_round(tmp_path, 1, "revise", ["a", "b", "c"])
+    write_round(tmp_path, 2, "revise", ["a"])
+    report, _ = run(capsys, monkeypatch, "--dir", str(tmp_path), "--last-only")
+    assert report["measures"]["counts"] == [
+        {"round": 1, "items": 3},
+        {"round": 2, "items": 1},
+    ]
+    assert len(report["rounds"]) == 1

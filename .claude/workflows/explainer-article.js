@@ -586,8 +586,21 @@ const GATE = {
 // already knows; `rounds` is the part the loop actually continues from.
 const ROUNDS = {
   type: 'object',
-  required: ['report', 'rounds'],
+  required: ['report', 'rounds', 'counts'],
   properties: {
+    // Asked for by name rather than left inside the free-form `measures`, because a free-form
+    // object is precisely what a summarising carrier trims. One number per round, for every
+    // round: the plateau detector needs the whole history, and `rounds` deliberately carries
+    // only the newest one.
+    counts: {
+      type: 'array',
+      description: 'the counts array from the report measures, verbatim, one entry per round',
+      items: {
+        type: 'object',
+        required: ['round', 'items'],
+        properties: { round: { type: 'number' }, items: { type: 'number' } },
+      },
+    },
     report: REPORT,
     rounds: {
       type: 'array',
@@ -1061,6 +1074,30 @@ if (cfg.fresh) {
         `вердикт=${last.verdict} стиль=${last.style_verdict} ` +
         `замечаний=${last.remarks.length}+${last.style.length} гейт=${last.gate.length}`,
     )
+
+    // The plateau detector counts from the article, not from the launch. Without this a resumed
+    // run calls the first round it happens to see the best one and pays for two more to learn
+    // otherwise: measured live as 16, 12, 16, 12, 16, where the detector should have stopped at
+    // the second 12. Counts rather than texts — one number per round, the same discipline that
+    // keeps the record itself from truncating in the carrier.
+    const counts = recorded.counts || []
+    for (const c of counts) {
+      if (c.items < bestOpen) {
+        bestOpen = c.items
+        bestRound = c.round
+        sinceBest = 0
+      } else {
+        sinceBest += 1
+      }
+    }
+    if (counts.length) {
+      log(
+        `[resume/rounds] лучший результат ${bestOpen} пунктов на круге ${bestRound}, ` +
+          `подряд без улучшения: ${sinceBest}`,
+      )
+    } else {
+      log('[resume/rounds] счёта прошлых кругов нет — полка считается заново с этого запуска')
+    }
   } else {
     log('[resume/rounds] записей о кругах нет, начинаем с первого')
   }
@@ -1503,7 +1540,18 @@ if (startRound > MAX_ROUNDS) {
   )
 }
 
-for (let round = startRound; round <= MAX_ROUNDS; round++) {
+// A run that comes back onto a plateau should not buy one more round to rediscover it. The
+// detector inside the loop only fires after a round has been paid for; here the same verdict is
+// available before anything is spent, because the counts came off disk.
+const plateauAlready = startRound > 1 && sinceBest >= PLATEAU_ROUNDS
+if (plateauAlready) {
+  log(
+    `[write] ПОЛКА уже достигнута прошлыми запусками: лучший результат ${bestOpen} пунктов ` +
+      `на круге ${bestRound}, после него ${sinceBest} круга без улучшения. Круги не покупаются.`,
+  )
+}
+
+for (let round = plateauAlready ? MAX_ROUNDS + 1 : startRound; round <= MAX_ROUNDS; round++) {
   rounds = round
   const writeInputs = [
     { port: 'brief', path: BRIEF_PATH },

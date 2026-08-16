@@ -89,6 +89,20 @@ function fill(schema, prompt) {
         // `count` is what the tool measured, and the script compares it to how many paths
         // actually arrived. The honest stub agrees with its own list; DRY_CARRIER_DROPS=1 makes
         // it disagree, which is what a carrier that summarised the listing looks like.
+        // One number per round, all rounds. DRY_PLATEAU=1 hands back a history that already sits
+        // on a plateau — best on round 2, two rounds since without beating it — so the branch
+        // that declines to buy another round is exercised rather than assumed.
+        if (key === 'counts' && sub && sub.type === 'array') {
+          out[key] = process.env.DRY_PLATEAU
+            ? [
+                { round: 1, items: 5 },
+                { round: 2, items: 3 },
+                { round: 3, items: 5 },
+                { round: 4, items: 4 },
+              ]
+            : [{ round: 1, items: 3 }]
+          continue
+        }
         if (key === 'count') {
           const files = out.files
           out[key] = Array.isArray(files)
