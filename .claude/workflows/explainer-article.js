@@ -622,10 +622,18 @@ const ROUNDS = {
 // could not have named — the per-source files the finder keeps on its own judgement.
 // One listing per command, in the order the commands were given. Matched by index, like every
 // other result that comes back from the carrying agent.
+// `count` is the tool's own `measures.files`, and it is required so the carrier can be checked
+// against itself. A live audit had the tool print 37 paths and the agent return one — the run
+// directory — and the script dutifully reported 36 files as read and the directory as an orphan.
+// A carrier that drops the list also drops the count, and then the two disagree and say so;
+// carrying a number is the one thing a summarising agent does not shorten.
 const LISTING = {
   type: 'object',
-  required: ['files'],
-  properties: { files: { type: 'array', items: { type: 'string' } } },
+  required: ['files', 'count'],
+  properties: {
+    files: { type: 'array', items: { type: 'string' } },
+    count: { type: 'integer', description: 'the files number from the report measures, verbatim' },
+  },
 }
 
 const LISTINGS = {
@@ -778,6 +786,21 @@ async function auditRun() {
   const onDisk = (audit && audit.files) || []
   if (!onDisk.length) {
     log('[audit] перечислить каталог прогона не удалось — ревизия не проведена')
+    warnings.push('ревизия каталога не проведена: перечисление не вернулось')
+    return { onDisk, orphans: [] }
+  }
+  // The carrier checked against itself. Subtraction only means anything on the whole list: paths
+  // that did not arrive look exactly like files that were never read.
+  const counted = audit && typeof audit.count === 'number' ? audit.count : null
+  if (counted !== null && counted !== onDisk.length) {
+    log(
+      `[audit] инструмент насчитал ${counted} файлов, доехало ${onDisk.length} — ` +
+        `ревизия НЕ проведена: на неполном списке вычитание врёт в обе стороны`,
+    )
+    warnings.push(
+      `ревизия не проведена: перечисление насчитало ${counted} файлов, ` +
+        `а через агента доехало ${onDisk.length}`,
+    )
     return { onDisk, orphans: [] }
   }
   const orphans = onDisk.filter((f) => !touched.has(f))

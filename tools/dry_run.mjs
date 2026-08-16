@@ -86,6 +86,16 @@ function fill(schema, prompt) {
           }))
           continue
         }
+        // `count` is what the tool measured, and the script compares it to how many paths
+        // actually arrived. The honest stub agrees with its own list; DRY_CARRIER_DROPS=1 makes
+        // it disagree, which is what a carrier that summarised the listing looks like.
+        if (key === 'count') {
+          const files = out.files
+          out[key] = Array.isArray(files)
+            ? files.length + (process.env.DRY_CARRIER_DROPS ? 5 : 0)
+            : 0
+          continue
+        }
         if (key === 'checks' && sub && sub.type === 'array') {
           const item = sub.items ?? {}
           const paths = pathsFromPrompt(prompt)
