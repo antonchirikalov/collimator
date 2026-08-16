@@ -23,6 +23,8 @@ import shutil
 import sys
 from pathlib import Path
 
+import toollog
+
 
 def snapshot(source: Path, target: Path, overwrite: bool) -> tuple[bool, list[str]]:
     """Copy source to target. Returns (copied, problems)."""
@@ -53,6 +55,7 @@ def main() -> int:
         "--overwrite", action="store_true", help="replace an existing snapshot instead of refusing"
     )
     p.add_argument("--strict", action="store_true", help="also exit 1 when the copy did not happen")
+    toollog.add_argument(p)
     args = p.parse_args()
 
     copied, problems = snapshot(args.file, args.to, args.overwrite)
@@ -64,6 +67,7 @@ def main() -> int:
             "bytes": args.to.stat().st_size if args.to.is_file() else 0,
         },
     }
+    toollog.append(args.log, "snapshot", report)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if (problems and args.strict) else 0
 

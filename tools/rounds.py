@@ -27,6 +27,8 @@ import re
 import sys
 from pathlib import Path
 
+import toollog
+
 ROUND_FILE = re.compile(r"^round-(\d+)\.md$")
 ITEM = re.compile(r"^\s*\d+\.\s+(.*\S)\s*$", re.MULTILINE)
 VERDICT = re.compile(r"\bverdict=(\w+)")
@@ -106,6 +108,7 @@ def main() -> int:
         help="emit only the newest round in `rounds`; counts still cover all of them",
     )
     p.add_argument("--strict", action="store_true", help="also exit 1 when a record is broken")
+    toollog.add_argument(p)
     args = p.parse_args()
 
     rounds, problems = collect(args.dir)
@@ -129,6 +132,7 @@ def main() -> int:
         "measures": {"rounds": len(rounds), "last_round": last},
         "rounds": emitted,
     }
+    toollog.append(args.log, "rounds", report)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if (problems and args.strict) else 0
 

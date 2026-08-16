@@ -85,6 +85,11 @@ const roundPathOf = (n) => `${ROUNDS_DIR}/round-${n}.md`
 // keeps what they said it about. Without it, "what actually changed between round 8 and round 9"
 // — the question worth asking when a loop stops converging — has no answer at all.
 const draftPathOf = (n) => `${ROUNDS_DIR}/draft-${n}.md`
+// One line per deterministic check, written by the tool that ran it. Everything a tool measures
+// otherwise lives only in `log()` — readable while the run is watched, gone once it is over.
+// Reconstructing a finished run meant opening per-agent transcripts and matching them by hand,
+// and the one time it mattered the evidence survived only because the tool could be re-run.
+const TOOLS_LOG = `${run}/tools.jsonl`
 
 // --- Configuration: everything a caller can change without editing this file ---------------
 //
@@ -261,6 +266,9 @@ const NO_FILE_RULE =
 // notes, a dead finder's directory, an agent's scratch json. None of them looked like failures;
 // all of them are a difference between these two sets.
 const touched = new Set()
+// Declared from the start: the tool log is a record for a person, so no agent will ever open it
+// and the audit would otherwise report it as a loss on every single run.
+touched.add(`${run}/tools.jsonl`)
 
 function task({ inputs, output, extra, noFile }) {
   for (const i of inputs || []) touched.add(i.path)
@@ -619,12 +627,17 @@ const EXISTENCE = {
 // `no_bold` and `ru_slop` are here rather than in a critic's remarks because both are
 // decidable by a regex, and a rule a regex can settle should never cost a revision round.
 // The style critic then spends its rounds on rhythm and voice, which no regex reaches.
+// `--log` on every command, always the same file. The tool writes its own receipt: the carrying
+// agent is forbidden to create files, and that rule has paid for itself twice — this is the
+// measurement leaving a record, written by whoever did the measuring.
+const LOG_FLAG = `--log ${TOOLS_LOG}`
+
 function gateCommand(path, min, max) {
   const bounds = []
   if (min) bounds.push(`--min-prose ${min}`)
   if (max) bounds.push(`--max-prose ${max}`)
   for (const preset of GATE_PRESETS) bounds.push(`--forbid-preset ${preset}`)
-  return `${GATE_TOOL} --file ${path} ${bounds.join(' ')}`.trim()
+  return `${GATE_TOOL} --file ${path} ${bounds.join(' ')} ${LOG_FLAG}`.trim()
 }
 
 // What gate_runner receives is a list of commands and nothing else. How to run them, what not
@@ -639,7 +652,7 @@ function commands(list) {
 // there anything in it" into one number the script can branch on.
 function existenceCommands(paths) {
   return commands(
-    paths.map((p) => `${GATE_TOOL} --file ${p} --min-length ${MIN_ARTIFACT_CHARS}`),
+    paths.map((p) => `${GATE_TOOL} --file ${p} --min-length ${MIN_ARTIFACT_CHARS} ${LOG_FLAG}`),
   )
 }
 
@@ -650,7 +663,7 @@ function existenceCommands(paths) {
 // finder's directory — so ending it without the check would leave the loss to be discovered a
 // segment later, or not at all.
 async function auditRun() {
-  const audit = await agent(commands([`${LISTING_TOOL} --dir ${run} --ext "" --recursive`]), {
+  const audit = await agent(commands([`${LISTING_TOOL} --dir ${run} --ext "" --recursive ${LOG_FLAG}`]), {
     agentType: 'gate-runner',
     model: MODELS.gate,
     label: 'audit',
@@ -847,7 +860,7 @@ if (cfg.fresh) {
 
   // The rounds already judged. Recovered from disk rather than from the process cache, for the
   // same reason as everything else here: the cache does not outlive the process.
-  const recorded = await agent(commands([`${ROUNDS_TOOL} --dir ${ROUNDS_DIR} --last-only`]), {
+  const recorded = await agent(commands([`${ROUNDS_TOOL} --dir ${ROUNDS_DIR} --last-only ${LOG_FLAG}`]), {
     agentType: 'gate-runner',
     model: MODELS.gate,
     label: 'resume:rounds',
@@ -1010,7 +1023,7 @@ if (found.length) {
       found.map(
         (f) =>
           `${LISTING_TOOL} --dir ${sourceDirOf(f.aspect.slug)} --ext .md ` +
-          `--exclude ${f.aspect.slug}.md`,
+          `--exclude ${f.aspect.slug}.md ${LOG_FLAG}`,
       ),
     ),
     {
@@ -1652,7 +1665,7 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
   // about one text, and the two halves of that have to be written at the same moment or they
   // stop being about each other.
   const snapped = await agent(
-    commands([`${SNAPSHOT_TOOL} --file ${ARTICLE_PATH} --to ${draftPathOf(round)}`]),
+    commands([`${SNAPSHOT_TOOL} --file ${ARTICLE_PATH} --to ${draftPathOf(round)} ${LOG_FLAG}`]),
     {
       agentType: 'file-copier',
       model: MODELS.copy,

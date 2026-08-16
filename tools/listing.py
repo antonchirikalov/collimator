@@ -28,6 +28,8 @@ import json
 import sys
 from pathlib import Path
 
+import toollog
+
 
 def listing(
     directory: Path, suffix: str, exclude: set[str], recursive: bool = False
@@ -75,6 +77,7 @@ def main() -> int:
         "--recursive", action="store_true", help="walk the whole tree, not just one level"
     )
     p.add_argument("--strict", action="store_true", help="also exit 1 when the directory is gone")
+    toollog.add_argument(p)
     args = p.parse_args()
 
     files, problems = listing(args.dir, args.ext, set(args.exclude), args.recursive)
@@ -84,6 +87,7 @@ def main() -> int:
         "measures": {"files": len(files)},
         "files": files,
     }
+    toollog.append(args.log, "listing", report)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if (problems and args.strict) else 0
 

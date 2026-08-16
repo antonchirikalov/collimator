@@ -26,6 +26,8 @@ import re
 import sys
 from pathlib import Path
 
+import toollog
+
 FENCED_BLOCK = re.compile(r"^```.*?^```\s*", re.DOTALL | re.MULTILINE)
 INLINE_CODE = re.compile(r"`[^`\n]*`")
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -157,6 +159,7 @@ def main() -> int:
     )
     p.add_argument("--min-entries", type=int, help="floor on entries directly inside --dir")
     p.add_argument("--strict", action="store_true", help="also exit 1 when the gate fails")
+    toollog.add_argument(p)
     args = p.parse_args()
 
     problems: list[str] = []
@@ -223,6 +226,7 @@ def main() -> int:
                 problems.append(f"min_entries {args.min_entries} not met (got {len(entries)})")
 
     report = {"ok": not problems, "problems": problems, "measures": measures}
+    toollog.append(args.log, "gate", report)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if (problems and args.strict) else 0
 

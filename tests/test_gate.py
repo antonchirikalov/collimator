@@ -591,3 +591,66 @@ def test_missing_msys_file_message_names_the_path_as_given(
     given = "/c/такого/каталога/нет/doc.md"
     report, _ = run(capsys, monkeypatch, "--file", given)
     assert report["problems"] == [f"output missing: {Path(given)}"]
+
+
+# --- журнал вызовов -------------------------------------------------------------------
+#
+# Всё, что инструмент измерил, иначе живёт только в `log()` воркфлоу: читаемо, пока за
+# прогоном смотрят, и недоступно, когда он кончился. Расписка пишется тем, кто мерил.
+
+
+def test_log_line_carries_the_call_and_the_verdict(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doc = write(tmp_path, "текст")
+    log = tmp_path / "tools.jsonl"
+    run(capsys, monkeypatch, "--file", str(doc), "--max-length", "2", "--log", str(log))
+    line = json.loads(log.read_text(encoding="utf-8").strip())
+    assert line["tool"] == "gate"
+    assert line["ok"] is False
+    assert line["measures"]["chars"] == 5
+    assert any("max_length" in p for p in line["problems"])
+    assert "--max-length" in line["argv"]
+    assert line["at"]
+
+
+def test_log_appends_rather_than_replaces(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doc = write(tmp_path, "текст")
+    log = tmp_path / "tools.jsonl"
+    run(capsys, monkeypatch, "--file", str(doc), "--log", str(log))
+    run(capsys, monkeypatch, "--file", str(doc), "--log", str(log))
+    assert len(log.read_text(encoding="utf-8").strip().splitlines()) == 2
+
+
+def test_log_holds_no_payload(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Строка обязана остаться читаемой после пятидесяти таких же — содержимое в неё не едет."""
+    doc = write(tmp_path, "текст " * 5000)
+    log = tmp_path / "tools.jsonl"
+    run(capsys, monkeypatch, "--file", str(doc), "--log", str(log))
+    assert len(log.read_text(encoding="utf-8")) < 600
+
+
+def test_without_log_nothing_is_written(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doc = write(tmp_path, "текст")
+    run(capsys, monkeypatch, "--file", str(doc))
+    assert list(tmp_path.glob("*.jsonl")) == []
+
+
+def test_unwritable_log_does_not_fail_the_check(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Потерять прогон из-за нерабочей расписки хуже, чем потерять расписку."""
+    doc = write(tmp_path, "текст")
+    blocked = tmp_path / "занято"
+    blocked.write_text("не каталог", encoding="utf-8")
+    report, code = run(
+        capsys, monkeypatch, "--file", str(doc), "--log", str(blocked / "tools.jsonl")
+    )
+    assert report["ok"] is True
+    assert code == 0
