@@ -1075,6 +1075,16 @@ if (cfg.fresh) {
         `замечаний=${last.remarks.length}+${last.style.length} гейт=${last.gate.length}`,
     )
 
+    // The records and snapshots of rounds a previous launch judged. Declared as writing, the
+    // same one exception the audit already makes for a draft snapshot: they were written for a
+    // person to read, and this launch does not open them. Without the declaration a resumed run
+    // reports four perfectly correct files as losses, and an audit that cries wolf is an audit
+    // nobody reads.
+    for (let n = 1; n < startRound; n++) {
+      touched.add(roundPathOf(n))
+      touched.add(draftPathOf(n))
+    }
+
     // The plateau detector counts from the article, not from the launch. Without this a resumed
     // run calls the first round it happens to see the best one and pays for two more to learn
     // otherwise: measured live as 16, 12, 16, 12, 16, where the detector should have stopped at
@@ -2017,18 +2027,13 @@ for (let round = plateauAlready ? MAX_ROUNDS + 1 : startRound; round <= MAX_ROUN
     log(`[record/${round}] КРУГ НЕ ЗАПИСАН — перезапуск будет судить статью заново`)
   }
 
-  // All three conditions. An article the mechanism critic likes but written in machine
-  // prose, one in the author's voice that explains the mechanism wrongly, and one both
-  // critics like that overruns the brief are equally unfinished.
-  if (verdict.verdict === 'ok' && styleOk && sizedReport.ok) break
-
-  // A round that produced the same set of items as the round before it has stopped moving, and
-  // the next one will produce it again. Six rounds of a live run cost five million tokens
-  // partly this way: the same five remarks came back word for word while the budget drained.
-  // Stopping here is not giving up — the items are recorded and reported either way; it is
-  // declining to pay for a third identical answer.
   // Did this round beat the best any round has managed? The count is what the reader of
   // UNRESOLVED.md will see, so it is the thing worth minimising.
+  //
+  // Counted before the acceptance check, not after. With the accounting below the break, the
+  // accepted round never became the best one: a live run accepted round 6 with seven items and
+  // reported its best as twelve on round 4 — and `best_round` is exactly what a person reads to
+  // find the draft snapshot worth keeping.
   if (roundItems.length < bestOpen) {
     bestOpen = roundItems.length
     bestRound = round
@@ -2039,13 +2044,24 @@ for (let round = plateauAlready ? MAX_ROUNDS + 1 : startRound; round <= MAX_ROUN
       `[write/${round}] не лучше достигнутого: ${roundItems.length} пунктов против ` +
         `${bestOpen} на круге ${bestRound} (подряд без улучшения: ${sinceBest})`,
     )
-    if (sinceBest >= PLATEAU_ROUNDS) {
-      log(
-        `[write/${round}] ПОЛКА: ${sinceBest} круга подряд не улучшили результат. Петля своё ` +
-          `отработала — остальное решает автор, и оно в отчёте.`,
-      )
-      break
-    }
+  }
+
+  // All three conditions. An article the mechanism critic likes but written in machine
+  // prose, one in the author's voice that explains the mechanism wrongly, and one both
+  // critics like that overruns the brief are equally unfinished.
+  if (verdict.verdict === 'ok' && styleOk && sizedReport.ok) break
+
+  // A round that produced the same set of items as the round before it has stopped moving, and
+  // the next one will produce it again. Six rounds of a live run cost five million tokens
+  // partly this way: the same five remarks came back word for word while the budget drained.
+  // Stopping here is not giving up — the items are recorded and reported either way; it is
+  // declining to pay for a third identical answer.
+  if (sinceBest >= PLATEAU_ROUNDS) {
+    log(
+      `[write/${round}] ПОЛКА: ${sinceBest} круга подряд не улучшили результат. Петля своё ` +
+        `отработала — остальное решает автор, и оно в отчёте.`,
+    )
+    break
   }
 
   const signature = JSON.stringify(roundItems.slice().sort())
