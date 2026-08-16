@@ -298,6 +298,12 @@ let lastPorts = null
 const warnings = []
 const emptyAspects = []
 
+// A remark as the ledger wants it: without the number the critic put in front of it. The ledger
+// is one list per round precisely because three lists each numbered from one make a number
+// meaningless — and a critic numbering its own items rebuilds that by hand. Only a leading
+// ordinal goes; a remark that opens with a year or a measurement keeps it.
+const unnumbered = (text) => String(text).replace(/^\s*\d{1,2}[.)]\s+/, '')
+
 async function call(taskText, opts) {
   handoff.push({
     label: opts.label,
@@ -1021,7 +1027,9 @@ if (cfg.fresh) {
     priorRounds = recorded.rounds
     const last = priorRounds[priorRounds.length - 1]
     startRound = last.round + 1
-    verdict = { verdict: last.verdict, remarks: last.remarks }
+    // Same normalisation on the way back off disk: a record written before this rule existed
+    // still carries the critic's own numbers, and a resumed round would renumber them again.
+    verdict = { verdict: last.verdict, remarks: last.remarks.map(unnumbered) }
     styleVerdict = { verdict: last.style_verdict }
     styleRemarks = last.style
     gateProblems = last.gate
@@ -1841,6 +1849,11 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
   ])
 
   verdict = judged || noVerdict('the critic on substance')
+  // A critic that numbers its own list is not wrong to; the ledger is what must stay single.
+  // Round 1 of a live run recorded `1. 1. …`, and the two numbers disagree from the first style
+  // item onward: ledger 6 is substance 1's neighbour, and the writer answers by number. That is
+  // exactly the failure one numbered list was built to prevent, arriving through the other door.
+  verdict.remarks = verdict.remarks.map(unnumbered)
   log(`[critic/${round}] verdict=${verdict.verdict} remarks=${verdict.remarks.length}`)
   for (const r of verdict.remarks) log(`[critic/${round}/remark] ${r}`)
 
