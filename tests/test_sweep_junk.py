@@ -93,3 +93,51 @@ def test_clean_root_is_a_no_op(
     monkeypatch.setattr(sys, "argv", ["sweep_junk.py"])
     assert sweep_junk.main() == 0
     assert "strays: 0 empty, 0 kept" in capsys.readouterr().out
+
+
+# --- мусорные файлы в корне -----------------------------------------------------------
+#
+# Вторая половина той же беды, и она была невидима: инструмент смотрел только каталоги.
+# За один рабочий день в корне нашлись temp_data.py, rounds_output.json,
+# final_structured_output.json и rounds_structured.json, и `git add -A` внёс три из них
+# в коммит.
+
+
+def test_known_root_files_are_not_strays(tmp_path: Path) -> None:
+    for name in ("pyproject.toml", "CLAUDE.md", ".gitignore"):
+        (tmp_path / name).write_text("x", encoding="utf-8")
+    assert sweep_junk.stray_files(tmp_path) == []
+
+
+def test_unknown_root_file_is_a_stray(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("x", encoding="utf-8")
+    (tmp_path / "rounds_output.json").write_text("{}", encoding="utf-8")
+    assert [p.name for p in sweep_junk.stray_files(tmp_path)] == ["rounds_output.json"]
+
+
+def test_directories_are_not_counted_as_stray_files(tmp_path: Path) -> None:
+    (tmp_path / "какой-то-каталог").mkdir()
+    assert sweep_junk.stray_files(tmp_path) == []
+
+
+def test_stray_files_are_sorted(tmp_path: Path) -> None:
+    for name in ("b.json", "a.json", "c.py"):
+        (tmp_path / name).write_text("x", encoding="utf-8")
+    assert [p.name for p in sweep_junk.stray_files(tmp_path)] == ["a.json", "b.json", "c.py"]
+
+
+def test_without_git_a_file_counts_as_tracked(tmp_path: Path) -> None:
+    """Нет ответа — значит не удаляем. Стереть исходник ради порядка хуже любого мусора."""
+    target = tmp_path / "неизвестно.json"
+    target.write_text("{}", encoding="utf-8")
+    assert sweep_junk.tracked_by_git(tmp_path, target) is True
+
+
+def test_untracked_file_in_a_repo_is_removable(tmp_path: Path) -> None:
+    """Чистая единица от git — единственный ответ, по которому можно удалять."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True)
+    target = tmp_path / "черновик.json"
+    target.write_text("{}", encoding="utf-8")
+    assert sweep_junk.tracked_by_git(tmp_path, target) is False
