@@ -246,7 +246,19 @@ const NO_FILE_RULE =
   `You write no file in this step and you edit nothing. The fields you return through the ` +
   `schema ARE your result — everything you found has to fit in them.`
 
+// Every path that ever reaches an agent, recorded as it goes. Not bookkeeping anyone has to
+// remember: a path becomes "consumed" by the only act that can consume it — appearing in a task —
+// so there is no way to hand a file to an agent without this seeing it.
+//
+// The audit at the end of the run subtracts this set from what is actually on disk. Every loss
+// this pipeline has had was the same shape: a file produced and never read. Twenty-five source
+// notes, a dead finder's directory, an agent's scratch json. None of them looked like failures;
+// all of them are a difference between these two sets.
+const touched = new Set()
+
 function task({ inputs, output, extra, noFile }) {
+  for (const i of inputs || []) touched.add(i.path)
+  if (!noFile && output) touched.add(output)
   const ports = (inputs || []).map((i) => `${i.port}: ${i.path}`).join('\n')
   return (
     (ports ? `INPUT\n${ports}\n\n` : '') +
@@ -533,6 +545,12 @@ const ROUNDS = {
 // could not have named — the per-source files the finder keeps on its own judgement.
 // One listing per command, in the order the commands were given. Matched by index, like every
 // other result that comes back from the carrying agent.
+const LISTING = {
+  type: 'object',
+  required: ['files'],
+  properties: { files: { type: 'array', items: { type: 'string' } } },
+}
+
 const LISTINGS = {
   type: 'object',
   required: ['listings'],
@@ -611,7 +629,35 @@ function existenceCommands(paths) {
 
 // Same for verbatim_writer: a destination, a heading, and the items. Everything about not
 // rephrasing them and not touching the article lives in its prompt.
+// The audit, as a function because both segments end and both have to answer the same question.
+// The research segment is where orphans were actually born — twenty-five source notes and a dead
+// finder's directory — so ending it without the check would leave the loss to be discovered a
+// segment later, or not at all.
+async function auditRun() {
+  const audit = await agent(commands([`${LISTING_TOOL} --dir ${run} --ext "" --recursive`]), {
+    agentType: 'gate-runner',
+    model: MODELS.gate,
+    label: 'audit',
+    phase: 'Gate',
+    schema: LISTING,
+  })
+  const onDisk = (audit && audit.files) || []
+  if (!onDisk.length) {
+    log('[audit] перечислить каталог прогона не удалось — ревизия не проведена')
+    return { onDisk, orphans: [] }
+  }
+  const orphans = onDisk.filter((f) => !touched.has(f))
+  log(
+    `[audit] файлов в каталоге ${onDisk.length}, прочитано агентами ${touched.size}, ` +
+      `никем не прочитано ${orphans.length}`,
+  )
+  for (const f of orphans) log(`[audit/сирота] ${f}`)
+  if (!orphans.length) log('[audit] потерь нет: всё, что произведено, кем-то прочитано')
+  return { onDisk, orphans }
+}
+
 function record(path, heading, items) {
+  touched.add(path)
   return (
     `FILE\n${path}\n\nHEADING\n${heading}\n\nITEMS\n` +
     items.map((r, i) => `${i + 1}. ${r}`).join('\n')
@@ -943,6 +989,13 @@ if (found.length) {
       for (const path of files) {
         extra.push({ port: `source:${f.aspect.slug}/${path.split('/').pop().replace(/\.md$/, '')}`, path })
       }
+      // The finder's own index: which file came from which URL, and whether the source is
+      // primary or someone's retelling of it. It was written on every run and read by nobody —
+      // provenance the analyst and the fact checker both want, sitting one directory away.
+      extra.push({
+        port: `index:${f.aspect.slug}`,
+        path: `${sourceDirOf(f.aspect.slug)}/_index.json`,
+      })
     })
     allSourcePorts = [...sourcePorts, ...extra]
     log(
@@ -1085,9 +1138,13 @@ if (!RUN_DRAFT) {
     `[итог/research] аспектов=${brief.aspects.length} закрыто=${covered} ` +
       `источников=${totalSources} материал=${present.has(MATERIAL_PATH) || Boolean(analysis)}`,
   )
+  const { onDisk, orphans: researchOrphans } = await auditRun()
   log(`[итог/research] дальше: тот же прогон с config.stages=["draft"]`)
   return {
     stages: STAGES,
+    files_on_disk: onDisk.length,
+    files_read_by_agents: touched.size,
+    orphans: researchOrphans,
     brief: BRIEF_PATH,
     sources: found.map((f) => f.path),
     material: MATERIAL_PATH,
@@ -1663,6 +1720,23 @@ if (!gate || !gate.stdout.includes('"ok"')) {
   log('[gate] MISMATCH: no gate JSON in the raw output — the command may not have run')
 }
 
+// --- Audit: is there anything here that nobody read? -----------------------------------------
+//
+// The question this answers is the one that cannot be answered by looking at the code: not "does
+// the wiring look right" but "did anything the run produced end up unread". Every loss found in
+// this pipeline had that exact shape, and none of them looked like a failure at the time:
+//
+//   - twenty-five source notes written by the finders, passed to nobody;
+//   - a dead finder's whole directory, dropped because the aspect left the list;
+//   - `_index.json`, written every run since the beginning, read for the first time today;
+//   - an agent's scratch `rounds_output.json`, sitting in the run directory.
+//
+// `touched` is every path that reached an agent. The disk is what is actually there. The
+// difference is the loss, and it is reported by name rather than counted, because a number tells
+// you that something went missing and a name tells you what.
+phase('Gate')
+const { onDisk: onDiskNow, orphans } = await auditRun()
+
 log(
   `[summary] aspects=${brief.aspects.length} sources=${totalSources} rounds=${rounds} ` +
     `verdict=${verdict.verdict} style=${styleVerdict ? styleVerdict.verdict : 'no verdict'} ` +
@@ -1687,4 +1761,7 @@ return {
   open_items: openItems.length,
   gate_ok: report.ok,
   gate_measures: report.measures,
+  files_on_disk: onDiskNow.length,
+  files_read_by_agents: touched.size,
+  orphans,
 }

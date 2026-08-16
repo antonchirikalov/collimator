@@ -93,3 +93,44 @@ def test_paths_use_forward_slashes(
     (tmp_path / "a.md").write_text("x", encoding="utf-8")
     report, _ = run(capsys, monkeypatch, "--dir", str(tmp_path))
     assert "\\" not in report["files"][0]
+
+
+# --- рекурсия: для итоговой ревизии каталога прогона -----------------------------------
+
+
+def test_recursive_walks_subdirectories(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "верх.md").write_text("x", encoding="utf-8")
+    nested = tmp_path / "sources" / "aspect"
+    nested.mkdir(parents=True)
+    (nested / "низ.md").write_text("x", encoding="utf-8")
+    report, _ = run(capsys, monkeypatch, "--dir", str(tmp_path), "--recursive")
+    # Сортировка по полному пути, а не по имени: `sources/aspect/низ.md` идёт раньше `верх.md`.
+    # Ревизия сравнивает множества, порядок ей безразличен — важно, что он воспроизводим.
+    assert {Path(f).name for f in report["files"]} == {"верх.md", "низ.md"}
+    assert report["files"] == sorted(report["files"])
+
+
+def test_without_recursive_only_the_top_level(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "верх.md").write_text("x", encoding="utf-8")
+    nested = tmp_path / "sources"
+    nested.mkdir()
+    (nested / "низ.md").write_text("x", encoding="utf-8")
+    report, _ = run(capsys, monkeypatch, "--dir", str(tmp_path))
+    assert [Path(f).name for f in report["files"]] == ["верх.md"]
+
+
+def test_recursive_keeps_the_exclusion_by_name(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    nested = tmp_path / "a"
+    nested.mkdir()
+    (nested / "нужен.md").write_text("x", encoding="utf-8")
+    (nested / "лишний.md").write_text("x", encoding="utf-8")
+    report, _ = run(
+        capsys, monkeypatch, "--dir", str(tmp_path), "--recursive", "--exclude", "лишний.md"
+    )
+    assert [Path(f).name for f in report["files"]] == ["нужен.md"]

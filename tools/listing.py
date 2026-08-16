@@ -29,15 +29,24 @@ import sys
 from pathlib import Path
 
 
-def listing(directory: Path, suffix: str, exclude: set[str]) -> tuple[list[str], list[str]]:
-    """Files directly inside the directory, as paths relative to the current directory."""
+def listing(
+    directory: Path, suffix: str, exclude: set[str], recursive: bool = False
+) -> tuple[list[str], list[str]]:
+    """Files inside the directory, as paths relative to the current directory.
+
+    `recursive` exists for the audit at the end of a run: the question there is not "what did
+    this stage produce" but "is there anything under the run directory that no agent ever read".
+    Every loss found in this pipeline had that shape — produced, never consumed — so the check
+    has to see the whole tree, not one level of it.
+    """
     problems: list[str] = []
     if not directory.is_dir():
         problems.append(f"directory missing: {directory}")
         return [], problems
 
     found: list[str] = []
-    for path in sorted(directory.iterdir()):
+    walk = sorted(directory.rglob("*")) if recursive else sorted(directory.iterdir())
+    for path in walk:
         if not path.is_file():
             continue
         if suffix and path.suffix != suffix:
@@ -62,10 +71,13 @@ def main() -> int:
         metavar="NAME",
         help="file name to leave out; repeatable",
     )
+    p.add_argument(
+        "--recursive", action="store_true", help="walk the whole tree, not just one level"
+    )
     p.add_argument("--strict", action="store_true", help="also exit 1 when the directory is gone")
     args = p.parse_args()
 
-    files, problems = listing(args.dir, args.ext, set(args.exclude))
+    files, problems = listing(args.dir, args.ext, set(args.exclude), args.recursive)
     report = {
         "ok": not problems,
         "problems": problems,
