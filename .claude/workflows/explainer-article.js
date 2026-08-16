@@ -81,6 +81,10 @@ const sourcePathOf = (slug) => `${sourceDirOf(slug)}/${slug}.md`
 // already judged — and MAX_ROUNDS becomes a property of the article rather than of the launch.
 const ROUNDS_DIR = `${run}/rounds`
 const roundPathOf = (n) => `${ROUNDS_DIR}/round-${n}.md`
+// The draft as it stood when that round judged it. The record keeps what the critics said; this
+// keeps what they said it about. Without it, "what actually changed between round 8 and round 9"
+// — the question worth asking when a loop stops converging — has no answer at all.
+const draftPathOf = (n) => `${ROUNDS_DIR}/draft-${n}.md`
 
 // --- Configuration: everything a caller can change without editing this file ---------------
 //
@@ -186,6 +190,7 @@ const MODELS = Object.assign(
     style: 'opus',
     gate: 'haiku',
     record: 'haiku',
+    copy: 'haiku',
     // Arithmetic it runs rather than judges, so the shell matters more than the model.
     verify: 'sonnet',
     // Attribution against notes is reading comprehension under pressure to leave things
@@ -200,6 +205,7 @@ const MODELS = Object.assign(
 const GATE_TOOL = cfg.gateTool || 'python -X utf8 tools/gate.py'
 const ROUNDS_TOOL = cfg.roundsTool || 'python -X utf8 tools/rounds.py'
 const LISTING_TOOL = cfg.listingTool || 'python -X utf8 tools/listing.py'
+const SNAPSHOT_TOOL = cfg.snapshotTool || 'python -X utf8 tools/snapshot.py'
 
 // The two correctors between the writer and the critics. On by default and switchable off,
 // because a pipeline whose documents carry no arithmetic and no citations pays for them for
@@ -1602,6 +1608,33 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
       schema: WROTE,
     },
   )
+  // Taken here, beside the record and before the loop can turn: one round produced one verdict
+  // about one text, and the two halves of that have to be written at the same moment or they
+  // stop being about each other.
+  const snapped = await agent(
+    commands([`${SNAPSHOT_TOOL} --file ${ARTICLE_PATH} --to ${draftPathOf(round)}`]),
+    {
+      agentType: 'file-copier',
+      model: MODELS.copy,
+      label: `snapshot:${round}`,
+      phase: 'Write',
+      schema: GATE,
+    },
+  )
+  // Declared, not consumed — and that distinction is the one exception the audit allows. A
+  // snapshot exists to be read by a person comparing two rounds, so no agent will ever open it,
+  // and without this line it would be reported as a loss every run. The rule the audit enforces
+  // is "read by an agent OR declared as a record", and this is where a record declares itself.
+  touched.add(draftPathOf(round))
+  if (snapped && snapped.report && snapped.report.ok) {
+    log(`[snapshot/${round}] черновик сохранён: ${draftPathOf(round)}`)
+  } else {
+    log(
+      `[snapshot/${round}] ЧЕРНОВИК НЕ СОХРАНЁН — сравнить круги между собой будет нечем` +
+        `${snapped && snapped.report ? ': ' + snapped.report.problems.join('; ') : ''}`,
+    )
+  }
+
   if (recordedRound && recordedRound.written) {
     log(`[record/${round}] круг записан: ${roundPathOf(round)} пунктов=${roundItems.length}`)
   } else {

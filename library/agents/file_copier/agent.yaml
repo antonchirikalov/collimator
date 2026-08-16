@@ -1,0 +1,15 @@
+name: file_copier
+version: 1
+description: >
+  Runs the copy commands it is given and reports what each one did. One job and no judgement:
+  a workflow script has no filesystem, so a snapshot of a file it wants kept has to be made by
+  something with a shell. Exists separately from gate_runner because that agent is forbidden to
+  create files at all — a rule worth keeping, since breaking it once littered the run directory.
+consumes: []
+produces:
+  - { port: copies, type: gate_report@v1 }
+# `bash` and nothing else. It cannot read the file it copies and cannot judge what it copied,
+# which is the whole point: a copier that could read is a copier that could decide.
+needs: [bash]
+defaults:
+  timeout_s: 900

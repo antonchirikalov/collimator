@@ -2,7 +2,7 @@
 
 Две части. Первая — отображение возможностей контракта в инструменты: таблица из
 `docs/plan.md`, включая слипание `read` и `vision` в один `Read`. Вторая — сборка на
-настоящей библиотеке: 27 агентов, и MCP ровно у тех пяти, у которых его называет `needs`.
+настоящей библиотеке: 28 агентов, и MCP ровно у тех пяти, у которых его называет `needs`.
 """
 
 from __future__ import annotations
@@ -218,8 +218,8 @@ def test_missing_prompt_is_named_in_the_error(tmp_path: Path) -> None:
 
 def test_emits_every_agent_of_the_library(tmp_path: Path) -> None:
     written = emit_all(LIBRARY_AGENTS, tmp_path)
-    assert len(written) == 27
-    assert len(list(tmp_path.glob("*.md"))) == 27
+    assert len(written) == 28
+    assert len(list(tmp_path.glob("*.md"))) == 28
 
 
 def test_every_emitted_file_parses_and_has_tools(tmp_path: Path) -> None:
