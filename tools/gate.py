@@ -41,45 +41,33 @@ EMPHASIS = re.compile(r"(\*\*|__|\*|_)")
 BLANKS = re.compile(r"[ \t]*\n[ \t]*")
 MSYS_DRIVE = re.compile(r"^/([A-Za-z])(?=/|$)")
 
-# Style presets: patterns that live in this file instead of on a command line.
+# Forbidden patterns come from FILES, not from this module and not from argv.
 #
-# Two reasons they are not just `--forbid` arguments. Cyrillic through argv on Windows is a
-# codepage lottery, and the gate stage does not choose the shell — a carrying agent picks
-# bash or powershell on its own, and the rake list already records what a mangled path does
-# to a run. And a preset is versioned with the repository: a phrase added here applies to
-# every pipeline at once, where a command-line list drifts per caller.
+# They used to live here, as a dict of Russian phrases inside a Python tool. That was wrong in
+# the ordinary way: a dead-phrase list is editorial policy for one language, the same kind of
+# thing as the author's voice profile next to it — data a person edits, not code. Wanting to
+# add a phrase should not mean opening a parser.
 #
-# Presets match OUTSIDE code — fenced blocks and inline code are removed first. Plain
-# `--forbid` still matches the whole file on purpose: `d_k ** 0.5` is a power in python and
-# `**важно**` is bold in prose, and only the caller knows which of the two it meant.
-PRESETS: dict[str, tuple[str, ...]] = {
-    # Turns of phrase that read as generated Russian. Deliberately narrow: «давайте
-    # разбираться» is a live author's transition and stays, «давайте разберём каждый
-    # пункт» is filler and goes. A pattern that fires on normal prose costs a revision
-    # round, so the list holds only phrases that carry no information at all.
-    "ru_slop": (
-        r"стоит отметить|стоит подчеркнуть|стоит обратить внимание",
-        r"важно (?:отметить|понимать|подчеркнуть)|нельзя не отметить|крайне важно",
-        r"давайте разбер[её]м|давайте рассмотрим|рассмотрим подробнее|разбер[её]м подробнее",
-        r"в заключение|подводя ито[гж]|резюмиру[яе]|в конечном ито[гж]е",
-        r"погрузимся в|нырн[её]м в|окун[её]мся в",
-        r"ключев(?:ой|ая|ым) (?:вывод|роль|момент)|игра(?:ет|ют) (?:важную|ключевую) роль",
-        r"явля(?:ет|ют)ся ключев",
-        r"в современном мире|в наши дни|на сегодняшний день|в эпоху",
-        r"не будем забывать|не стоит забывать",
-        r"в этой стать[ебй] мы (?:рассмотрим|разбер[её]м|поговорим)",
-        r"валидиру|имплементиру|хендлит|репортит|апрув",
-        # Emoji: the pictographic planes only. Arrows and check marks live lower in the
-        # table and belong to legitimate technical prose.
-        r"[\U0001F300-\U0001FAFF]",
-    ),
-    # Bold inside prose. A separate preset because it is a formatting rule, not a
-    # vocabulary one, and a pipeline may want one without the other.
-    "no_bold": (
-        r"\*\*[^\n*]+\*\*",
-        r"__[^\n_]+__",
-    ),
-}
+# Not argv either, and that part was right the first time: Cyrillic through a command line on
+# Windows depends on the codepage and on which shell the carrying agent picked. A file sidesteps
+# it completely — the path is ASCII, the contents are UTF-8 read by Python.
+#
+# One regex per line. `#` starts a comment, blank lines are ignored. Matched OUTSIDE code:
+# fenced blocks and inline code are removed first, because `d_k ** 0.5` is a power and
+# `**важно**` is bold, and only the caller knows which was meant.
+COMMENT = re.compile(r"^\s*#")
+
+
+def patterns_of(path: Path) -> tuple[list[str], list[str]]:
+    """Read one pattern file. A missing file is a problem, not an empty rule set.
+
+    Silently checking nothing is the failure this returns instead of: a gate that found no
+    violations because it had no patterns reads exactly like a gate that passed.
+    """
+    if not path.is_file():
+        return [], [f"pattern file missing: {path}"]
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return [ln.strip() for ln in lines if ln.strip() and not COMMENT.match(ln)], []
 
 
 def outside_code(text: str) -> str:
@@ -150,12 +138,12 @@ def main() -> int:
         help="pattern that must not appear (case-insensitive); repeatable",
     )
     p.add_argument(
-        "--forbid-preset",
+        "--forbid-file",
         action="append",
         default=[],
-        choices=sorted(PRESETS),
-        metavar="NAME",
-        help=f"named pattern set matched outside code; repeatable ({', '.join(sorted(PRESETS))})",
+        type=Path,
+        metavar="PATH",
+        help="file of patterns matched outside code, one per line; repeatable",
     )
     p.add_argument("--min-entries", type=int, help="floor on entries directly inside --dir")
     p.add_argument("--strict", action="store_true", help="also exit 1 when the gate fails")
@@ -197,21 +185,23 @@ def main() -> int:
             if hits:
                 measures["regex"] = hits
 
-            preset_hits: dict[str, int] = {}
+            file_hits: dict[str, int] = {}
             prose_markup = outside_code(text)
-            for name in args.forbid_preset:
-                for pattern in PRESETS[name]:
+            for pattern_file in args.forbid_file:
+                patterns, missing = patterns_of(pattern_file)
+                problems.extend(missing)
+                for pattern in patterns:
                     found = re.findall(pattern, prose_markup, flags=re.IGNORECASE)
-                    preset_hits[pattern] = len(found)
+                    file_hits[pattern] = len(found)
                     if found:
                         # The sample is what makes the problem actionable: the writer gets
                         # the phrase it must remove, not the regex that caught it.
                         sample = ", ".join(sorted({str(f) for f in found})[:3])
                         problems.append(
-                            f"preset {name} matched {len(found)}x: {pattern} ({sample})"
+                            f"{pattern_file.name} matched {len(found)}x: {pattern} ({sample})"
                         )
-            if preset_hits:
-                measures["preset"] = preset_hits
+            if file_hits:
+                measures["forbidden"] = file_hits
 
     if args.dir is not None:
         target_dir = resolve_path(args.dir)

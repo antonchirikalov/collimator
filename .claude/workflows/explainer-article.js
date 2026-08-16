@@ -90,6 +90,8 @@ const draftPathOf = (n) => `${ROUNDS_DIR}/draft-${n}.md`
 // Reconstructing a finished run meant opening per-agent transcripts and matching them by hand,
 // and the one time it mattered the evidence survived only because the tool could be re-run.
 const TOOLS_LOG = `${run}/tools.jsonl`
+// Who was handed what, per call. Composed by the script, written by an agent, read by a person.
+const HANDOFF_PATH = `${run}/handoff.md`
 
 // --- Configuration: everything a caller can change without editing this file ---------------
 //
@@ -162,17 +164,20 @@ const MIN_ARTIFACT_CHARS = cfg.minArtifactChars || 200
 //
 // `cfg.gatePresets` and `cfg.styleCritic` still win when given: a caller who knows better than
 // the table says so directly.
+const RU = {
+  styleCritic: 'style-critic-ru',
+  forbid: ['library/style/forbid/ru-slop.txt', 'library/style/forbid/no-bold.txt'],
+}
 const LANGUAGE_POLICY = Object.assign(
-  {
-    russian: { styleCritic: 'style-critic-ru', gatePresets: ['ru_slop', 'no_bold'] },
-    'русский': { styleCritic: 'style-critic-ru', gatePresets: ['ru_slop', 'no_bold'] },
-  },
+  { russian: RU, 'русский': RU },
   cfg.languagePolicy || {},
 )
-const DEFAULT_POLICY = { styleCritic: null, gatePresets: ['no_bold'] }
+// A language with no entry gets the formatting rule and no vocabulary: bold is bold in any
+// language, dead phrases are not.
+const DEFAULT_POLICY = { styleCritic: null, forbid: ['library/style/forbid/no-bold.txt'] }
 
 // Assigned once the brief has been read. Until then nothing measures and nothing judges.
-let GATE_PRESETS = []
+let FORBID_FILES = []
 let STYLE_CRITIC = null
 
 // The author's voice profile. `null` is a real answer, not a missing one: a pipeline writing
@@ -266,6 +271,29 @@ const NO_FILE_RULE =
 // notes, a dead finder's directory, an agent's scratch json. None of them looked like failures;
 // all of them are a difference between these two sets.
 const touched = new Set()
+// Every call, with what it was handed and what it was asked to leave. Not a logging agent: an
+// agent is the least reliable component in this pipeline — one truncated a tool's output from
+// five rounds to two and cost 1.4 million tokens, another returned absolute paths where the
+// script had passed relative ones — and putting the audit trail through it would be trusting the
+// record to the thing the record exists to check. The script already knows all of this; nothing
+// needs to be asked.
+//
+// `lastPorts` works because JavaScript evaluates arguments left to right: `call(task({...}), …)`
+// runs `task` first, so the ports it just formatted are still the ones this call is about.
+const handoff = []
+let lastPorts = null
+
+async function call(taskText, opts) {
+  handoff.push({
+    label: opts.label,
+    agent: opts.agentType || '(встроенный)',
+    model: opts.model,
+    inputs: (lastPorts && lastPorts.inputs) || [],
+    output: (lastPorts && lastPorts.output) || null,
+  })
+  lastPorts = null
+  return agent(taskText, opts)
+}
 // Declared from the start: the tool log is a record for a person, so no agent will ever open it
 // and the audit would otherwise report it as a loss on every single run.
 touched.add(`${run}/tools.jsonl`)
@@ -273,6 +301,10 @@ touched.add(`${run}/tools.jsonl`)
 function task({ inputs, output, extra, noFile }) {
   for (const i of inputs || []) touched.add(i.path)
   if (!noFile && output) touched.add(output)
+  lastPorts = {
+    inputs: (inputs || []).map((i) => `${i.port} → ${i.path}`),
+    output: noFile ? null : output,
+  }
   const ports = (inputs || []).map((i) => `${i.port}: ${i.path}`).join('\n')
   return (
     (ports ? `INPUT\n${ports}\n\n` : '') +
@@ -619,14 +651,14 @@ const EXISTENCE = {
 
 // The bounds are optional on purpose: a run whose order said nothing about length gets a
 // measurement and no verdict. gate.py with no rule still reports chars and prose_chars.
-// The presets are named, not spelled out. Their patterns are Cyrillic and they live in
-// gate.py; putting them on this command line would push Russian through argv on Windows,
-// where the shell is whichever one the carrying agent picked and the codepage is whatever
-// it happens to be. A name keeps the command pure ASCII.
+// The forbidden patterns arrive as file paths, and the paths are ASCII: Cyrillic through argv
+// on Windows depends on the codepage and on which shell the carrying agent picked. The patterns
+// themselves are UTF-8 inside the file, read by python, and they are data a person edits —
+// editorial policy for one language, not a constant inside a parser.
 //
-// `no_bold` and `ru_slop` are here rather than in a critic's remarks because both are
-// decidable by a regex, and a rule a regex can settle should never cost a revision round.
-// The style critic then spends its rounds on rhythm and voice, which no regex reaches.
+// They live here rather than in a critic's remarks because a regex settles them, and a rule a
+// regex can settle should never cost a revision round. The style critic then spends its rounds
+// on rhythm and voice, which no regex reaches.
 // `--log` on every command, always the same file. The tool writes its own receipt: the carrying
 // agent is forbidden to create files, and that rule has paid for itself twice — this is the
 // measurement leaving a record, written by whoever did the measuring.
@@ -636,7 +668,7 @@ function gateCommand(path, min, max) {
   const bounds = []
   if (min) bounds.push(`--min-prose ${min}`)
   if (max) bounds.push(`--max-prose ${max}`)
-  for (const preset of GATE_PRESETS) bounds.push(`--forbid-preset ${preset}`)
+  for (const file of FORBID_FILES) bounds.push(`--forbid-file ${file}`)
   return `${GATE_TOOL} --file ${path} ${bounds.join(' ')} ${LOG_FLAG}`.trim()
 }
 
@@ -662,8 +694,34 @@ function existenceCommands(paths) {
 // The research segment is where orphans were actually born — twenty-five source notes and a dead
 // finder's directory — so ending it without the check would leave the loss to be discovered a
 // segment later, or not at all.
+// The handoff record: every call, in order, with what it was handed and what it left. Written
+// once per segment rather than once per action, because the content is composed by the script
+// from what it already knows — an agent adds a transcription step and a chance to get it wrong.
+//
+// This is the answer to "did everything get passed correctly and did nothing change": the
+// record says what was passed, `tools.jsonl` says what each measurement found, and the audit
+// says whether anything on disk went unread. Three independent records, none of them a model's
+// recollection of events.
+async function recordHandoff() {
+  const lines = handoff.map((h) => {
+    const ins = h.inputs.length ? h.inputs.join(' | ') : '(нет входов)'
+    const out = h.output || '(файла нет, только схема)'
+    return `${h.label} [${h.agent}, ${h.model}] ВХОД: ${ins} ВЫХОД: ${out}`
+  })
+  touched.add(HANDOFF_PATH)
+  const wrote = await call(
+    record(HANDOFF_PATH, `Передачи между агентами, вызовов: ${lines.length}`, lines),
+    { agentType: 'verbatim-writer', model: MODELS.record, label: 'handoff', phase: 'Gate', schema: WROTE },
+  )
+  log(
+    wrote && wrote.written
+      ? `[handoff] записано передач: ${lines.length} → ${HANDOFF_PATH}`
+      : `[handoff] НЕ ЗАПИСАНО — что кому передавалось, останется только в логе прогона`,
+  )
+}
+
 async function auditRun() {
-  const audit = await agent(commands([`${LISTING_TOOL} --dir ${run} --ext "" --recursive ${LOG_FLAG}`]), {
+  const audit = await call(commands([`${LISTING_TOOL} --dir ${run} --ext "" --recursive ${LOG_FLAG}`]), {
     agentType: 'gate-runner',
     model: MODELS.gate,
     label: 'audit',
@@ -700,7 +758,7 @@ log(`[start] order: ${order.replace(/\s+/g, ' ').slice(0, 200)}`)
 
 phase('Brief')
 const brief = must(
-  await agent(
+  await call(
     task({
       output: BRIEF_PATH,
       extra: `THE ORDER, as the person wrote it:\n\n${order}`,
@@ -742,10 +800,10 @@ log(
 for (const a of brief.aspects) log(`[brief/aspect] ${a.slug}: ${a.question}`)
 
 const policy = LANGUAGE_POLICY[String(brief.language || '').toLowerCase()] || DEFAULT_POLICY
-GATE_PRESETS = cfg.gatePresets || policy.gatePresets
+FORBID_FILES = cfg.forbidFiles || policy.forbid || []
 STYLE_CRITIC = cfg.styleCritic === undefined ? policy.styleCritic : cfg.styleCritic
 log(
-  `[brief/policy] язык=${brief.language} наборы_гейта=${GATE_PRESETS.join(',') || 'нет'} ` +
+  `[brief/policy] язык=${brief.language} запреты=${FORBID_FILES.join(', ') || 'нет'} ` +
     `стилевой_критик=${STYLE_CRITIC || 'НЕТ ДЛЯ ЭТОГО ЯЗЫКА'}`,
 )
 if (!STYLE_CRITIC) {
@@ -814,7 +872,7 @@ if (cfg.fresh) {
 } else {
   phase('Resume')
   const resumePaths = [...sourcePaths, MATERIAL_PATH, ARTICLE_PATH]
-  const onDisk = await agent(existenceCommands(resumePaths), {
+  const onDisk = await call(existenceCommands(resumePaths), {
     agentType: 'gate-runner',
     model: MODELS.gate,
     label: 'resume',
@@ -860,7 +918,7 @@ if (cfg.fresh) {
 
   // The rounds already judged. Recovered from disk rather than from the process cache, for the
   // same reason as everything else here: the cache does not outlive the process.
-  const recorded = await agent(commands([`${ROUNDS_TOOL} --dir ${ROUNDS_DIR} --last-only ${LOG_FLAG}`]), {
+  const recorded = await call(commands([`${ROUNDS_TOOL} --dir ${ROUNDS_DIR} --last-only ${LOG_FLAG}`]), {
     agentType: 'gate-runner',
     model: MODELS.gate,
     label: 'resume:rounds',
@@ -895,7 +953,7 @@ if (cfg.fresh) {
   // before it died with that process — and the length budget silently goes missing exactly
   // when the run is being continued because the length was wrong.
   if (present.has(ARTICLE_PATH) && startRound > 1) {
-    const sizedNow = await agent(commands([gateCommand(ARTICLE_PATH, minProse, maxProse)]), {
+    const sizedNow = await call(commands([gateCommand(ARTICLE_PATH, minProse, maxProse)]), {
       agentType: 'gate-runner',
       model: MODELS.gate,
       label: 'resume:size',
@@ -924,7 +982,7 @@ const findings = await parallel(
     // A draft-only launch never searches. If the file is not there, the segment before this one
     // did not finish, and saying so beats quietly researching inside a stage nobody asked to run.
     if (!RUN_RESEARCH) return Promise.resolve('absent')
-    return agent(
+    return call(
       task({
         inputs: [{ port: 'brief', path: BRIEF_PATH }],
         output: sourcePathOf(aspect.slug),
@@ -1018,7 +1076,7 @@ let allSourcePorts = sourcePorts
 if (found.length) {
   // One command per aspect directory, in the order the script listed them — the same index rule
   // as everywhere else. The summary file is excluded because it is already a port above.
-  const listed = await agent(
+  const listed = await call(
     commands(
       found.map(
         (f) =>
@@ -1086,7 +1144,7 @@ if (present.has(MATERIAL_PATH)) {
 } else if (!RUN_RESEARCH) {
   log('[analyse] материала нет, а этап research не запрошен — писатель пойдёт без него')
 } else {
-  analysis = await agent(analyseTask, {
+  analysis = await call(analyseTask, {
     agentType: 'domain-analyst',
     model: MODELS.analyse,
     label: 'analyse',
@@ -1119,7 +1177,7 @@ const nothingRan = found.every((f) => f.reused) && present.has(MATERIAL_PATH)
 let existence = nothingRan
   ? { checks: [...found.map(() => ({ ok: true, problems: [] })), { ok: true, problems: [] }] }
   : must(
-  await agent(existenceCommands([...found.map((f) => f.path), MATERIAL_PATH]), {
+  await call(existenceCommands([...found.map((f) => f.path), MATERIAL_PATH]), {
     agentType: 'gate-runner',
     model: MODELS.gate,
     label: 'verify:1',
@@ -1155,7 +1213,7 @@ if (!materialCheck) {
 }
 if (materialCheck && !materialCheck.ok) {
   log(`[verify] MATERIAL NOT CREATED, retrying: ${materialCheck.problems.join('; ')}`)
-  analysis = await agent(
+  analysis = await call(
     `The previous attempt left no file on disk: ${materialCheck.problems.join('; ')}\n\n` +
       analyseTask,
     {
@@ -1166,7 +1224,7 @@ if (materialCheck && !materialCheck.ok) {
       schema: ANALYSIS,
     },
   )
-  existence = await agent(existenceCommands([MATERIAL_PATH]), {
+  existence = await call(existenceCommands([MATERIAL_PATH]), {
     agentType: 'gate-runner',
     model: MODELS.gate,
     label: 'verify:2',
@@ -1197,6 +1255,7 @@ if (!RUN_DRAFT) {
     `[итог/research] аспектов=${brief.aspects.length} закрыто=${covered} ` +
       `источников=${totalSources} материал=${present.has(MATERIAL_PATH) || Boolean(analysis)}`,
   )
+  await recordHandoff()
   const { onDisk, orphans: researchOrphans } = await auditRun()
   log(`[итог/research] дальше: тот же прогон с config.stages=["draft"]`)
   return {
@@ -1365,7 +1424,7 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
     log('[write/1] черновик уже на диске, писатель не запускается — сразу гейт и критики')
   } else {
     const article = must(
-      await agent(task({ inputs: writeInputs, output: ARTICLE_PATH, extra: revision }), {
+      await call(task({ inputs: writeInputs, output: ARTICLE_PATH, extra: revision }), {
         agentType: 'article-writer',
         model: MODELS.write,
         label: `write:${round}`,
@@ -1433,7 +1492,7 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
   // and should see the number that survived. Both run before the gate, so the measurement the
   // critics are told about is the measurement of the text that actually exists.
   if (USE_CORRECTORS && !skipWriter) {
-    const verified = await agent(
+    const verified = await call(
       task({
         inputs: [
           { port: 'draft', path: ARTICLE_PATH },
@@ -1461,7 +1520,7 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
       log(`[example/${round}] ПРОВЕРЯЮЩИЙ АРИФМЕТИКУ НЕ ОТРАБОТАЛ — числа примера не сверены`)
     }
 
-    const checked = await agent(
+    const checked = await call(
       task({
         // All of them, not the four summaries. Checking an attribution against a summary of
         // the paper is how a wrong corpus name survives a correction stage.
@@ -1492,7 +1551,7 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
   }
 
   // Measure before judging, so neither critic spends a remark on something already counted.
-  const sized = await agent(commands([gateCommand(ARTICLE_PATH, minProse, maxProse)]), {
+  const sized = await call(commands([gateCommand(ARTICLE_PATH, minProse, maxProse)]), {
     agentType: 'gate-runner',
     model: MODELS.gate,
     label: `gate:${round}`,
@@ -1542,7 +1601,7 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
 
   const [judged, styled] = await parallel([
     () =>
-      agent(
+      call(
         task({
           inputs: criticInputs,
           noFile: true,
@@ -1574,7 +1633,7 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
       ),
     () =>
       STYLE_CRITIC
-        ? agent(
+        ? call(
             task({
               inputs: [
                 { port: 'draft', path: ARTICLE_PATH },
@@ -1583,8 +1642,8 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
               ],
               noFile: true,
               extra:
-                `A deterministic gate has already run over this draft with the presets ` +
-                `${GATE_PRESETS.join(', ') || '(none)'}, and reported: ` +
+                `A deterministic gate has already run over this draft with the pattern files ` +
+                `${FORBID_FILES.join(', ') || '(none)'}, and reported: ` +
                 `${gateProblems.length ? gateProblems.join('; ') : 'nothing found'}.` +
                 ` Confirm what it found by quoting it, and spend your own rounds on what a` +
                 ` regex cannot reach — rhythm, address, terminology, the author's voice.` +
@@ -1647,7 +1706,7 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
     ...gateProblems.map((p) => `Gate: ${p}`),
     ...carried.map((c) => `Carried: ${c}`),
   ]
-  const recordedRound = await agent(
+  const recordedRound = await call(
     record(
       roundPathOf(round),
       `Round ${round} — verdict=${verdict.verdict} style=${styled ? styled.verdict : 'unknown'}`,
@@ -1664,7 +1723,7 @@ for (let round = startRound; round <= MAX_ROUNDS; round++) {
   // Taken here, beside the record and before the loop can turn: one round produced one verdict
   // about one text, and the two halves of that have to be written at the same moment or they
   // stop being about each other.
-  const snapped = await agent(
+  const snapped = await call(
     commands([`${SNAPSHOT_TOOL} --file ${ARTICLE_PATH} --to ${draftPathOf(round)} ${LOG_FLAG}`]),
     {
       agentType: 'file-copier',
@@ -1762,7 +1821,7 @@ if (openItems.length) {
       `style=${styleVerdict ? styleVerdict.verdict : 'no verdict'} ` +
       `${passed ? 'accepted with remarks' : 'NOT accepted'}: items=${openItems.length}`,
   )
-  const wrote = await agent(
+  const wrote = await call(
     record(
       UNRESOLVED_PATH,
       passed
@@ -1784,7 +1843,7 @@ if (openItems.length) {
 // --- Gate: the acceptance record ---------------------------------------------------------
 
 phase('Gate')
-const gate = await agent(commands([gateCommand(ARTICLE_PATH, minProse, maxProse)]), {
+const gate = await call(commands([gateCommand(ARTICLE_PATH, minProse, maxProse)]), {
   agentType: 'gate-runner',
   model: MODELS.gate,
   label: 'gate:final',
@@ -1821,6 +1880,7 @@ if (!gate || !gate.stdout.includes('"ok"')) {
 // difference is the loss, and it is reported by name rather than counted, because a number tells
 // you that something went missing and a name tells you what.
 phase('Gate')
+await recordHandoff()
 const { onDisk: onDiskNow, orphans } = await auditRun()
 
 log(
