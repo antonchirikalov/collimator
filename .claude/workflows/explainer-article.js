@@ -88,6 +88,33 @@ const roundPathOf = (n) => `${ROUNDS_DIR}/round-${n}.md`
 // have to edit the script to change is a value nobody changes.
 const cfg = (args && args.config) || {}
 
+// --- Segments: which part of the pipeline this launch runs -----------------------------------
+//
+// A workflow lives inside the CLI process, and the process does not survive a restart, a session
+// moved to a background job, or a quota wall. A run that does everything therefore risks
+// everything: forty minutes of research died once because the process that held them went away
+// mid-draft.
+//
+// So a launch is a segment. `research` ends with material on disk; `draft` ends with an article
+// and the round records. Each is small enough to lose cheaply, and the boundary between them is
+// where a person would look anyway. Figures are already their own workflow.
+//
+// One file rather than two, deliberately. The two segments share the configuration block, the
+// I/O tail, the schemas and the gate commands — about a hundred and twenty lines. Split across
+// files with no `import()` available, those hundred and twenty lines become two copies that
+// drift, which is the failure this project keeps paying for. The stage list selects; nothing is
+// duplicated.
+const ALL_STAGES = ['research', 'draft']
+const STAGES = (cfg.stages && cfg.stages.length ? cfg.stages : ALL_STAGES).map((s) =>
+  String(s).toLowerCase(),
+)
+const unknownStages = STAGES.filter((s) => !ALL_STAGES.includes(s))
+if (unknownStages.length) {
+  throw new Error(`неизвестные этапы: ${unknownStages.join(', ')}; есть только ${ALL_STAGES.join(', ')}`)
+}
+const RUN_RESEARCH = STAGES.includes('research')
+const RUN_DRAFT = STAGES.includes('draft')
+
 const MAX_ROUNDS = cfg.maxRounds || 2
 // How many rounds may fail to beat the best result before the loop admits it has finished.
 // Two, because one bad round is noise and two in a row is a plateau.
@@ -558,7 +585,7 @@ function record(path, heading, items) {
 
 // --- Brief -------------------------------------------------------------------------------
 
-log(`[start] dir=${run}`)
+log(`[start] dir=${run} этапы=${STAGES.join(' + ')}`)
 log(`[start] order: ${order.replace(/\s+/g, ' ').slice(0, 200)}`)
 
 phase('Brief')
@@ -754,6 +781,9 @@ phase('Research')
 const findings = await parallel(
   brief.aspects.map((aspect) => () => {
     if (present.has(sourcePathOf(aspect.slug))) return Promise.resolve('reused')
+    // A draft-only launch never searches. If the file is not there, the segment before this one
+    // did not finish, and saying so beats quietly researching inside a stage nobody asked to run.
+    if (!RUN_RESEARCH) return Promise.resolve('absent')
     return agent(
       task({
         inputs: [{ port: 'brief', path: BRIEF_PATH }],
@@ -792,6 +822,10 @@ for (let i = 0; i < brief.aspects.length; i++) {
     log(`[research/${aspect.slug}] переиспользован с диска, поиск не запускался`)
     continue
   }
+  if (result === 'absent') {
+    log(`[research/${aspect.slug}] НЕТ НА ДИСКЕ, а этап research не запрошен — аспект не закрыт`)
+    continue
+  }
   found.push({ aspect, path, sources: result.sources, reused: false })
   log(
     `[research/${aspect.slug}] sources=${result.sources.length} ` +
@@ -820,6 +854,8 @@ phase('Analyse')
 let analysis = null
 if (present.has(MATERIAL_PATH)) {
   log('[analyse] материал уже на диске, аналитик не запускается')
+} else if (!RUN_RESEARCH) {
+  log('[analyse] материала нет, а этап research не запрошен — писатель пойдёт без него')
 } else {
   analysis = await agent(analyseTask, {
     agentType: 'domain-analyst',
@@ -915,6 +951,31 @@ if (materialCheck && !materialCheck.ok) {
   }
   if (!rechecked.length || rechecked.some((c) => !c.ok)) {
     log('[verify/2] STILL NO MATERIAL — the writer goes without it, and that is in the report')
+  }
+}
+
+// --- End of the research segment --------------------------------------------------------------
+//
+// A launch that was only asked to research stops here, with the material on disk and the run
+// summarised. Everything the drafting segment needs is a file: the brief carries the aspect
+// slugs, the slugs name the source files, and the analysis is the writer's material. Nothing of
+// value lives in this process once these lines have run.
+if (!RUN_DRAFT) {
+  const covered = found.filter((f) => !f.reused || present.has(f.path)).length
+  log(
+    `[итог/research] аспектов=${brief.aspects.length} закрыто=${covered} ` +
+      `источников=${totalSources} материал=${present.has(MATERIAL_PATH) || Boolean(analysis)}`,
+  )
+  log(`[итог/research] дальше: тот же прогон с config.stages=["draft"]`)
+  return {
+    stages: STAGES,
+    brief: BRIEF_PATH,
+    sources: found.map((f) => f.path),
+    material: MATERIAL_PATH,
+    aspects: brief.aspects.map((a) => a.slug),
+    sources_total: totalSources,
+    sources_reused_from_disk: found.filter((f) => f.reused).length,
+    aspects_covered: covered,
   }
 }
 
@@ -1488,6 +1549,7 @@ log(
 )
 
 return {
+  stages: STAGES,
   brief: BRIEF_PATH,
   sources: found.map((f) => f.path),
   material: MATERIAL_PATH,
