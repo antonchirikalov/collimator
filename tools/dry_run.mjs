@@ -110,6 +110,16 @@ function fill(schema, prompt) {
             : 0
           continue
         }
+        // DRY_EXISTS_OK=1 keeps disk checks passing while everything else still fails. A pipeline
+        // that refuses to continue when a whole fan-out came back empty — the right thing to do —
+        // otherwise stops the failure run at that refusal, and the loop branches downstream go
+        // untested. Two invocations cover both: bare `bad` proves the refusal, `bad` with this
+        // proves the loop.
+        if (key === 'checks' && sub && sub.type === 'array' && process.env.DRY_EXISTS_OK) {
+          const item = sub.items ?? {}
+          out[key] = pathsFromPrompt(prompt).map(() => ({ ...fill(item, prompt), ok: true, problems: [] }))
+          continue
+        }
         if (key === 'checks' && sub && sub.type === 'array') {
           const item = sub.items ?? {}
           const paths = pathsFromPrompt(prompt)

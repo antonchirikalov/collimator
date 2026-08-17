@@ -1141,6 +1141,24 @@ if (RUN_REQUIREMENTS) {
   }
   log(`[extract] извлечений на диске: ${extractPorts.length} из ${sources.length}`)
 
+  // One extract lost out of five is worth less than throwing away the four that worked. All of
+  // them lost is a different thing: the writer would be handed no material at all, and it would
+  // either invent a requirements document or die — and in a live run it died three stages later,
+  // after the run had already paid for the resume, the listing and two rounds of setup.
+  //
+  // The likely cause is named because it recurs and looks like nothing else: the registry of agent
+  // types is snapshotted once per human turn, so an agent generated in the same turn as the launch
+  // is not callable yet, however correct its file is.
+  if (!extractPorts.length) {
+    const died = extracted.filter((e) => !e || !e.res).length
+    throw new Error(
+      `ни одного извлечения из ${sources.length} входных документов — писателю требований ` +
+        `нечего читать, дальше идти незачем. Агентов не ответило: ${died}. ` +
+        `Если агенты собраны в этом же ходе, они станут видны реестру только со следующего ` +
+        `сообщения человека: соберите, дождитесь следующего сообщения, запускайте.`,
+    )
+  }
+
   // --- Requirements: the first revision loop -------------------------------------------------
   const orderPort = order ? [{ port: 'order', path: `${run}/inputs` }] : []
   requirements = await reviseLoop({
