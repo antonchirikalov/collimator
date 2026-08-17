@@ -721,6 +721,16 @@ async function reviseLoop({
   let verdicts = critics.map((c) => null)
   let gateProblems = []
   let measured = 0
+  // What the document measured when the previous round judged it. A revision loop with no ceiling
+  // is a growth loop: every remark a critic raises is closed by specifying something, specifying
+  // adds text, and nothing pushes back. Measured on a live design with the ceiling removed —
+  // 37 595, then 50 633, then 73 978 characters of prose across three rounds, while the item count
+  // went 11, 12, 8. Round 2 bought thirteen thousand characters and one extra remark.
+  //
+  // The script does not judge this, because it cannot: a specification that grew because it was
+  // vague grew correctly. It measures and says so, in the log and in the round record, where a
+  // person deciding whether to buy another round can see the price of the last one.
+  let previousMeasured = 0
 
   // The rounds already judged, recovered from disk rather than from the process cache, for the
   // same reason as everything else here: the cache does not outlive the process. Without this,
@@ -973,10 +983,13 @@ async function reviseLoop({
       problems: ['the gate returned nothing — the draft was not measured'],
       measures: {},
     }
+    previousMeasured = measured
     measured = (gateReport.measures && gateReport.measures.prose_chars) || 0
     gateProblems = gateReport.problems || []
+    const grew = previousMeasured ? measured - previousMeasured : 0
     log(
       `[${loop}/${round}/gate] ok=${gateReport.ok} знаков прозы=${measured}` +
+        (grew ? ` (${grew > 0 ? '+' : ''}${grew} к прошлому кругу)` : '') +
         (gateProblems.length ? ` | ${gateProblems.join('; ')}` : ''),
     )
 
@@ -1033,10 +1046,14 @@ async function reviseLoop({
       ...carried.map((c) => `Carried: ${c}`),
     ]
     const secondVerdict = critics.length > 1 && verdicts[1] ? verdicts[1].verdict : 'approved'
+    // The size and what it cost, in the heading, because the record is what outlives the run. The
+    // question a person asks before buying another round is "what did the last one buy me", and
+    // both halves of the answer — items closed, characters added — have to be in one line.
+    const priceTag = grew ? ` prose=${measured} (${grew > 0 ? '+' : ''}${grew})` : ` prose=${measured}`
     const wroteRound = await call(
       record(
         roundPathOf(loop, round),
-        `Round ${round} — verdict=${verdicts[0] ? verdicts[0].verdict : 'unknown'} style=${secondVerdict}`,
+        `Round ${round} — verdict=${verdicts[0] ? verdicts[0].verdict : 'unknown'} style=${secondVerdict}${priceTag}`,
         roundItems,
       ),
       { agentType: 'verbatim-writer', model: MODELS.record, label: `${loop}:record:${round}`, phase: phaseName, schema: WROTE },
