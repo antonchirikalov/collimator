@@ -108,12 +108,20 @@ const MODELS = {
   copy: 'sonnet',
   ...(cfg.models || {}),
 }
-// Length bounds for the two documents. Absent is a legal answer: the gate then measures and does
-// not judge. A requirements document that must be complete has no business having a ceiling, so
-// only a floor is set by default; the design gets both, because a design nobody reads is a design
-// that failed.
+// Length bounds. Absent is a legal answer and it is the default for the ceiling: the gate then
+// measures and does not judge.
+//
+// A ceiling nobody asked for makes acceptance unreachable, and this was measured rather than
+// reasoned. An invented ceiling of 40 000 met a critic holding four blocking defects, each of
+// which is closed by specifying something the design had left vague. Round 2 grew the document to
+// 42 126, round 3 was told to remove 2 126 and not add — and grew it to 44 590. Neither agent was
+// wrong: the critic asked for specification, the gate asked for cuts, and the loop cannot satisfy
+// both. In the article pipeline the same budget block worked on the first try, because there the
+// ceiling came from the order — the client's own requirement — rather than from the script.
+//
+// So the script states no ceiling of its own. A caller whose order names one passes it.
 const REQ_BOUNDS = cfg.reqBounds || { min: 6000, max: 0 }
-const DESIGN_BOUNDS = cfg.designBounds || { min: 12000, max: 40000 }
+const DESIGN_BOUNDS = cfg.designBounds || { min: 12000, max: 0 }
 // No forbidden-pattern files by default. This is an internal engineering document, not an article
 // in someone's voice, and the slop list is editorial policy for published prose. A caller who
 // wants it passes paths.
