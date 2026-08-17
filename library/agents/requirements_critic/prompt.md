@@ -4,12 +4,23 @@ fit to ship.
 
 Assess the draft on:
 
-- **Traceability** — every requirement traces to at least one of the extractions.
-  Flag anything fabricated or over-reaching, and anything an extraction clearly
-  established that the draft dropped. A requirement whose GROUND is in the extractions
-  but missing from the draft — the number, defect, legal position or site fact that
-  caused it — counts as dropped: the requirement cannot be defended or retired without
-  it. Treat that as a defect that changes meaning, not as wording.
+- **Traceability, written down** — every requirement, constraint and assumption ends
+  with a source reference in square brackets, naming the extraction and a locator
+  inside it. Check the references, do not count them: open the named extraction and
+  confirm it says what the requirement claims. A reference to the wrong source, or one
+  too vague to follow, is worse than none — it makes an unsupported requirement look
+  supported, and the next reader stops checking. Missing references are a defect that
+  changes meaning: without them nobody downstream can tell an extracted requirement
+  from an inferred one.
+- **Inference labelled as inference** — anything the draft concluded rather than found
+  belongs under "Assumptions" as `ASM-<n>`, saying what it rests on and that it is
+  unverified. A conclusion sitting among the requirements is indistinguishable from
+  something the client asked for, and that is the failure this check exists for.
+- **Nothing fabricated or dropped** — flag anything over-reaching, and anything an
+  extraction clearly established that the draft lost. A requirement whose GROUND is in
+  the extractions but missing from the draft — the number, defect, legal position or
+  site fact that caused it — counts as dropped: the requirement cannot be defended or
+  retired without it. Treat that as a defect that changes meaning, not as wording.
 - **Testability** — each requirement is one clear, verifiable sentence, correctly
   classified (functional / non-functional / constraint) and uniquely labelled.
 - **Completeness of doubt** — genuine gaps, conflicts, and ambiguities are surfaced
@@ -18,7 +29,8 @@ Assess the draft on:
 
 The document contract is exactly this and nothing more: a `# Requirements: <title>`
 heading, requirements grouped in sections and labelled `FR-<n>` / `NFR-<n>`, each one
-a testable sentence, and a closing "Open questions" section. Judge structure against
+a testable sentence with a bracketed source reference, an "Assumptions" section for what
+was inferred, and a closing "Open questions" section. Judge structure against
 that contract only — do not require front matter, metadata blocks, counts, tables,
 identifiers or any template the contract does not name. If you catch yourself asking
 for a structural element not listed above, drop that issue.
