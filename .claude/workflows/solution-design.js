@@ -127,6 +127,16 @@ const DESIGN_BOUNDS = cfg.designBounds || { min: 12000, max: 0 }
 // wants it passes paths.
 const FORBID_FILES = cfg.forbidFiles || []
 
+// Which directories belong to which stage, so the audit can tell a loss from somebody else's
+// business. A launch that only designs never opens `inputs/` or `extracts/`, and never should.
+const STAGE_OWNED = [
+  { prefix: `${INPUTS_DIR}/`, mine: RUN_REQUIREMENTS },
+  { prefix: `${EXTRACTS_DIR}/`, mine: RUN_REQUIREMENTS },
+  { prefix: `${roundsDirOf('req')}/`, mine: RUN_REQUIREMENTS },
+  { prefix: `${CANDIDATES_DIR}/`, mine: RUN_DESIGN },
+  { prefix: `${roundsDirOf('design')}/`, mine: RUN_DESIGN },
+]
+
 const GATE_TOOL = cfg.gateTool || 'python -X utf8 tools/gate.py'
 const ROUNDS_TOOL = cfg.roundsTool || 'python -X utf8 tools/rounds.py'
 const LISTING_TOOL = cfg.listingTool || 'python -X utf8 tools/listing.py'
@@ -557,14 +567,26 @@ async function auditRun() {
     )
     return { onDisk, orphans: [] }
   }
-  const orphans = onDisk.filter((f) => !touched.has(f))
+  const unread = onDisk.filter((f) => !touched.has(f))
+  // Files a stage this launch did not run produced and consumed. A design-only launch never opens
+  // the input documents or the extracts, and it is right not to — the requirements document is
+  // what it reads. Counting them as losses is how the audit cries wolf: a live design run reported
+  // six orphans, every one of them correct and none of them a loss, which is exactly the thing
+  // that teaches a reader to skip the audit line.
+  //
+  // Named by prefix rather than by listing them, because this launch has no reason to know what is
+  // in a directory it does not use, and asking would cost an agent call to learn nothing.
+  const elsewhere = STAGE_OWNED.filter((p) => !p.mine).map((p) => p.prefix)
+  const foreign = unread.filter((f) => elsewhere.some((prefix) => f.startsWith(prefix)))
+  const orphans = unread.filter((f) => !foreign.includes(f))
   log(
     `[audit] файлов в каталоге ${onDisk.length}, прочитано агентами ${touched.size}, ` +
-      `никем не прочитано ${orphans.length}`,
+      `чужого этапа ${foreign.length}, никем не прочитано ${orphans.length}`,
   )
+  for (const f of foreign) log(`[audit/чужой-этап] ${f}`)
   for (const f of orphans) log(`[audit/сирота] ${f}`)
-  if (!orphans.length) log('[audit] потерь нет: всё, что произведено, кем-то прочитано')
-  return { onDisk, orphans }
+  if (!orphans.length) log('[audit] потерь нет: всё, что произвёл этот запуск, кем-то прочитано')
+  return { onDisk, orphans, foreign }
 }
 
 // --- Is anybody else working here ------------------------------------------------------------
@@ -1242,7 +1264,7 @@ if (RUN_REQUIREMENTS) {
     )
   }
   await recordHandoff()
-  const { orphans: reqOrphans } = await auditRun()
+  const { orphans: reqOrphans, foreign: reqForeign } = await auditRun()
   if (!RUN_DESIGN) {
     log(`[итог/requirements] дальше: тот же каталог с config.stages=["design"]`)
     return {
@@ -1255,6 +1277,7 @@ if (RUN_REQUIREMENTS) {
       open_items: requirements.open.length,
       unresolved: requirements.open.length ? UNRESOLVED_PATH : null,
       orphans: reqOrphans,
+      other_stage: reqForeign,
       warnings,
     }
   }
@@ -1462,7 +1485,7 @@ const openItems = [
 await recordUnresolved(openItems, design.accepted)
 
 await recordHandoff()
-const { onDisk, orphans } = await auditRun()
+const { onDisk, orphans, foreign } = await auditRun()
 
 log(
   `[итог] требований=${Boolean(requirements || present.has(REQ_PATH))} дизайн=${design.accepted ? 'принят' : 'с замечаниями'} ` +
@@ -1490,5 +1513,6 @@ return {
   files_on_disk: onDisk.length,
   files_read_by_agents: touched.size,
   orphans,
+  other_stage: foreign,
   warnings,
 }
