@@ -491,6 +491,40 @@ async function recordHandoff() {
   )
 }
 
+// What no round managed to close, on disk. A function rather than a block at the end, because
+// this pipeline has two exits — a launch that only builds the requirements returns early — and the
+// first version wrote the record on one of them. A live run then ended with eight open remarks and
+// no file naming them: exactly the silent pass this project treats as its worst failure mode.
+//
+// Written even when the document was accepted. A critic that says `approved` and attaches remarks
+// has accepted the document and left work behind; those remarks are for a person, not for the next
+// round, and a report nobody wrote is a report nobody reads.
+async function recordUnresolved(items, accepted) {
+  if (!items.length) {
+    log('[unresolved] незакрытых замечаний нет')
+    return
+  }
+  const wrote = await call(
+    record(
+      UNRESOLVED_PATH,
+      accepted
+        ? 'Документ принят, но эти замечания остались незакрытыми'
+        : 'Круги правки кончились, эти замечания остались открытыми',
+      items,
+    ),
+    { agentType: 'verbatim-writer', model: MODELS.record, label: 'unresolved', phase: 'Gate', schema: WROTE },
+  )
+  log(
+    wrote && wrote.written
+      ? `[unresolved] незакрытых пунктов ${items.length} → ${UNRESOLVED_PATH}`
+      : `[unresolved] ФАЙЛ НЕ ЗАПИСАН, а незакрытых пунктов ${items.length}`,
+  )
+  if (!(wrote && wrote.written)) {
+    warnings.push(`незакрытые замечания (${items.length}) не записаны в файл`)
+  }
+  for (const item of items) log(`[unresolved/пункт] ${item}`)
+}
+
 async function auditRun() {
   const audit = await call(
     commands([`${LISTING_TOOL} --dir ${run} --ext "" --recursive ${noted('audit: anything produced and never read')}`]),
@@ -1192,6 +1226,13 @@ if (RUN_REQUIREMENTS) {
     ],
   })
 
+  if (!RUN_DESIGN) {
+    // Before the handoff record, so the record carries the warning if the file was not written.
+    await recordUnresolved(
+      requirements.open.map((o) => `Требования: ${o}`),
+      requirements.accepted,
+    )
+  }
   await recordHandoff()
   const { orphans: reqOrphans } = await auditRun()
   if (!RUN_DESIGN) {
@@ -1204,6 +1245,7 @@ if (RUN_REQUIREMENTS) {
       rounds: requirements.rounds,
       accepted: requirements.accepted,
       open_items: requirements.open.length,
+      unresolved: requirements.open.length ? UNRESOLVED_PATH : null,
       orphans: reqOrphans,
       warnings,
     }
@@ -1409,26 +1451,7 @@ const openItems = [
   ...(requirements ? requirements.open.map((o) => `Требования: ${o}`) : []),
   ...design.open.map((o) => `Дизайн: ${o}`),
 ]
-if (openItems.length) {
-  const wrote = await call(
-    record(
-      UNRESOLVED_PATH,
-      design.accepted
-        ? 'Дизайн принят, но эти замечания остались незакрытыми'
-        : 'Круги правки кончились, эти замечания остались открытыми',
-      openItems,
-    ),
-    { agentType: 'verbatim-writer', model: MODELS.record, label: 'unresolved', phase: 'Gate', schema: WROTE },
-  )
-  log(
-    wrote && wrote.written
-      ? `[unresolved] незакрытых пунктов ${openItems.length} → ${UNRESOLVED_PATH}`
-      : `[unresolved] ФАЙЛ НЕ ЗАПИСАН, а незакрытых пунктов ${openItems.length}`,
-  )
-  for (const item of openItems) log(`[unresolved/пункт] ${item}`)
-} else {
-  log('[unresolved] незакрытых замечаний нет')
-}
+await recordUnresolved(openItems, design.accepted)
 
 await recordHandoff()
 const { onDisk, orphans } = await auditRun()
